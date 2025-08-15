@@ -1,10 +1,15 @@
 package com.example.vintageexposurecalculator
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -13,14 +18,21 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.vintageexposurecalculator.ui.theme.VintageExposureCalculatorTheme
 import java.util.Locale
 import kotlin.math.abs
+// THIS IMPORT IS CRUCIAL FOR PERMISSION REQUESTS
+import androidx.activity.compose.rememberLauncherForActivityResult
 
 data class LightingOption(val label: String, val ev: Int)
 val lightingOptions = listOf(
@@ -32,6 +44,7 @@ val lightingOptions = listOf(
     LightingOption("Open Shade/Sunset (EV 11)", 11),
     LightingOption("Dim Indoors (EV 8)", 8)
 )
+
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -46,6 +59,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExposureCalculatorScreen(exposureViewModel: ExposureViewModel = viewModel()) {
     val iso by exposureViewModel.iso
@@ -56,8 +70,26 @@ fun ExposureCalculatorScreen(exposureViewModel: ExposureViewModel = viewModel())
     val selectedShutter by exposureViewModel.selectedShutter
     val result by exposureViewModel.result
     val allCombinations by exposureViewModel.allCombinations
+    val currentEv by exposureViewModel.currentEv
 
     var showAddProfileDialog by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    var hasCameraPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+        onResult = { isGranted ->
+            hasCameraPermission = isGranted
+        }
+    )
+
+    val modes = listOf("Manual EV", "Live Meter")
+    var selectedMode by remember { mutableStateOf(modes.first()) }
+
 
     if (showAddProfileDialog) {
         AddProfileDialog(
@@ -107,12 +139,72 @@ fun ExposureCalculatorScreen(exposureViewModel: ExposureViewModel = viewModel())
         }
 
         item {
-            LightingDropDown(
-                selectedValue = lightingEv,
-                onValueSelected = { exposureViewModel.onLightingChanged(it) }
-            )
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                modes.forEachIndexed { index, label ->
+                    SegmentedButton(
+                        shape = SegmentedButtonDefaults.itemShape(index = index, count = modes.size),
+                        onClick = {
+                            if (label == "Live Meter" && !hasCameraPermission) {
+                                permissionLauncher.launch(Manifest.permission.CAMERA)
+                            }
+                            selectedMode = label
+                            // When switching back to manual, reset EV to the dropdown's value
+                            if (label == "Manual EV") {
+                                exposureViewModel.onLightingChanged(lightingEv)
+                            }
+                        },
+                        selected = label == selectedMode
+                    ) {
+                        Text(label)
+                    }
+                }
+            }
             Spacer(modifier = Modifier.height(16.dp))
         }
+
+        item {
+            if (selectedMode == "Manual EV") {
+                LightingDropDown(
+                    selectedValue = lightingEv,
+                    onValueSelected = { exposureViewModel.onLightingChanged(it) }
+                )
+            } else {
+                // --- THIS IS THE NEW CAMERA PREVIEW SECTION ---
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(200.dp).clip(MaterialTheme.shapes.medium),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (hasCameraPermission) {
+                        CameraPreview(
+                            onEvCalculated = { ev ->
+                                // Update the ViewModel with the live EV from the camera
+                                exposureViewModel.onEvChanged(ev)
+                            },
+                            iso = iso.toDoubleOrNull() ?: 100.0
+                        )
+                        // Display the live EV reading as an overlay
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 8.dp)
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.5f))
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Text(
+                                text = "Live EV: $currentEv",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    } else {
+                        Text("Camera permission needed for Live Meter.")
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
 
         item {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -161,6 +253,7 @@ fun ExposureCalculatorScreen(exposureViewModel: ExposureViewModel = viewModel())
     }
 }
 
+// ... All other composable functions (ResultCard, AllCombinationsCard, etc.) remain the same
 @Composable
 fun ResultCard(result: CalculationResult?) {
     Card(modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(4.dp)) {
@@ -211,7 +304,6 @@ fun ResultCard(result: CalculationResult?) {
         }
     }
 }
-
 @Composable
 fun AllCombinationsCard(combinations: List<ExposureCombination>) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -221,7 +313,6 @@ fun AllCombinationsCard(combinations: List<ExposureCombination>) {
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.padding(bottom = 8.dp)
             )
-            // Header Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -231,8 +322,6 @@ fun AllCombinationsCard(combinations: List<ExposureCombination>) {
                 Text("Correction", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
             }
             Divider(modifier = Modifier.padding(vertical = 4.dp))
-
-            // Combination Rows
             combinations.forEach { combo ->
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -258,19 +347,10 @@ fun AllCombinationsCard(combinations: List<ExposureCombination>) {
         }
     }
 }
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingDropDown(
-    label: String,
-    options: List<String>,
-    selectedValue: String?,
-    onValueSelected: (String) -> Unit,
-    enabled: Boolean,
-    onClear: () -> Unit
-) {
+fun SettingDropDown(label: String, options: List<String>, selectedValue: String?, onValueSelected: (String) -> Unit, enabled: Boolean, onClear: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-
     ExposedDropdownMenuBox(
         expanded = expanded && enabled,
         onExpandedChange = { if (enabled) expanded = !expanded },
@@ -308,7 +388,6 @@ fun SettingDropDown(
         }
     }
 }
-
 @Composable
 fun AddProfileDialog( onDismiss: () -> Unit, onSave: (name: String, apertures: String, shutterSpeeds: String) -> Unit) {
     var name by remember { mutableStateOf("") }

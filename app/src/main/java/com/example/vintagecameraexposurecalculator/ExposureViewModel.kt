@@ -16,26 +16,28 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
 
     // --- State ---
     private val _iso = mutableStateOf("100")
-    private val _lightingEv = mutableStateOf(15)
+    // This now represents the EV from the manual dropdown
+    private val _manualLightingEv = mutableStateOf(15)
     private val _cameraProfiles = mutableStateOf<List<CameraProfile>>(emptyList())
     private val _selectedProfileId = mutableStateOf<String?>(null)
     private val _selectedAperture = mutableStateOf<Double?>(null)
     private val _selectedShutter = mutableStateOf<Int?>(null)
     private val _result = mutableStateOf<CalculationResult?>(null)
-    // NEW: State for the combinations table
     private val _allCombinations = mutableStateOf<List<ExposureCombination>>(emptyList())
+    // NEW: This holds the EV value used for calculations, from either manual or live source.
+    private val _currentEv = mutableStateOf(15)
 
 
     // --- Public Immutable States ---
     val iso: State<String> = _iso
-    val lightingEv: State<Int> = _lightingEv
+    val lightingEv: State<Int> = _manualLightingEv // UI binds to the manual selection
     val cameraProfiles: State<List<CameraProfile>> = _cameraProfiles
     val selectedProfileId: State<String?> = _selectedProfileId
     val selectedAperture: State<Double?> = _selectedAperture
     val selectedShutter: State<Int?> = _selectedShutter
     val result: State<CalculationResult?> = _result
-    // NEW: Public state for the combinations table
     val allCombinations: State<List<ExposureCombination>> = _allCombinations
+    val currentEv: State<Int> = _currentEv // For display in Live Meter mode
 
     val selectedProfile: CameraProfile?
         get() = _cameraProfiles.value.find { it.id == _selectedProfileId.value }
@@ -51,8 +53,15 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
         recalculate()
     }
 
+    // Updated to set the manual EV and then call the general EV update function
     fun onLightingChanged(newEv: Int) {
-        _lightingEv.value = newEv
+        _manualLightingEv.value = newEv
+        onEvChanged(newEv)
+    }
+
+    // NEW: General function to update the EV used for calculations
+    fun onEvChanged(newEv: Int) {
+        _currentEv.value = newEv
         recalculate()
     }
 
@@ -125,6 +134,8 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
             _cameraProfiles.value = profiles
             _selectedProfileId.value = sharedPreferences.getString("SELECTED_PROFILE_ID", profiles.first().id)
         }
+        // Initialize the current EV with the manual one
+        _currentEv.value = _manualLightingEv.value
     }
 
     // --- Main Calculation ---
@@ -132,12 +143,11 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
         val isoNum = _iso.value.toDoubleOrNull()
         val profile = selectedProfile
 
-        // Calculate single best result if a setting is selected
         if (isoNum == null || profile == null || (_selectedAperture.value == null && _selectedShutter.value == null)) {
             _result.value = null
         } else {
             _result.value = calculateBestSetting(
-                lightingEv = _lightingEv.value,
+                lightingEv = _currentEv.value, // Use the current EV for all calcs
                 iso = isoNum,
                 profile = profile,
                 fixedAperture = _selectedAperture.value,
@@ -145,10 +155,9 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
             )
         }
 
-        // Calculate all combinations for the table
         if (isoNum != null && profile != null) {
             _allCombinations.value = calculateAllCombinations(
-                lightingEv = _lightingEv.value,
+                lightingEv = _currentEv.value, // Use the current EV for all calcs
                 iso = isoNum,
                 profile = profile
             )
