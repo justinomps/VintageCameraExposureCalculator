@@ -3,18 +3,27 @@ package com.example.vintageexposurecalculator
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log // <-- THIS IMPORT WAS MISSING
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add // <-- THIS IMPORT WAS MISSING
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -23,20 +32,28 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.vintageexposurecalculator.ui.theme.VintageExposureCalculatorTheme
+import java.nio.ByteBuffer
 import java.util.Locale
+import java.util.concurrent.Executors
 import kotlin.math.abs
+import kotlin.math.log2
 import androidx.activity.compose.rememberLauncherForActivityResult
 
 // --- Data Classes and Constants ---
@@ -50,6 +67,7 @@ val lightingOptions = listOf(
     LightingOption("Open Shade/Sunset (EV 11)", 11),
     LightingOption("Dim Indoors (EV 8)", 8)
 )
+enum class MeteringMode { AVERAGE, SPOT }
 
 // --- Main Activity ---
 class MainActivity : ComponentActivity() {
@@ -57,7 +75,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             VintageExposureCalculatorTheme {
-                // NEW: Set up navigation between screens
                 val navController = rememberNavController()
                 val exposureViewModel: ExposureViewModel = viewModel()
 
@@ -108,6 +125,8 @@ fun ExposureCalculatorScreen(
     val allCombinations by exposureViewModel.allCombinations
     val currentEv by exposureViewModel.currentEv
     val bestOverallResult by exposureViewModel.bestOverallResult
+    val meteringMode by exposureViewModel.meteringMode
+    val spotMeteringPoint by exposureViewModel.spotMeteringPoint
 
     val context = LocalContext.current
     var hasCameraPermission by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
@@ -136,14 +155,12 @@ fun ExposureCalculatorScreen(
                         onProfileSelected = { exposureViewModel.onProfileSelected(it) }
                     )
                 }
-                // UPDATED: Button now navigates to the manage screen
                 IconButton(onClick = onManageProfilesClicked) {
                     Icon(Icons.Default.Edit, contentDescription = "Manage Camera Profiles")
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
         }
-        // ... rest of the UI items (ISO, Mode Toggle, etc.) ...
         item {
             OutlinedTextField(
                 value = iso,
@@ -181,22 +198,45 @@ fun ExposureCalculatorScreen(
                     onValueSelected = { exposureViewModel.onLightingChanged(it) }
                 )
             } else {
-                Box(
-                    modifier = Modifier.fillMaxWidth().height(200.dp).clip(MaterialTheme.shapes.medium),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (hasCameraPermission) {
-                        CameraPreview(
-                            onEvCalculated = { ev -> exposureViewModel.onEvChanged(ev) },
-                            iso = iso.toDoubleOrNull() ?: 100.0
-                        )
-                        Box(
-                            modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.5f)).padding(horizontal = 12.dp, vertical = 8.dp)
-                        ) {
-                            Text(text = "Live EV: $currentEv", color = Color.White, fontWeight = FontWeight.Bold)
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val meteringModes = listOf(MeteringMode.AVERAGE, MeteringMode.SPOT)
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        meteringModes.forEachIndexed { index, mode ->
+                            SegmentedButton(
+                                shape = SegmentedButtonDefaults.itemShape(index = index, count = meteringModes.size),
+                                onClick = { exposureViewModel.onMeteringModeChanged(mode) },
+                                selected = mode == meteringMode
+                            ) { Text(mode.name.lowercase().replaceFirstChar { it.titlecase() }) }
                         }
-                    } else {
-                        Text("Camera permission needed for Live Meter.")
+                    }
+                    Box(modifier = Modifier.fillMaxWidth().height(200.dp).clip(MaterialTheme.shapes.medium), contentAlignment = Alignment.Center) {
+                        if (hasCameraPermission) {
+                            CameraView(
+                                onEvCalculated = { ev -> exposureViewModel.onEvChanged(ev) },
+                                iso = iso.toDoubleOrNull() ?: 100.0,
+                                meteringMode = meteringMode,
+                                spotMeteringPoint = spotMeteringPoint,
+                                onTapToMeter = { offset, size ->
+                                    exposureViewModel.onTapToMeter(Pair(offset.x / size.width, offset.y / size.height))
+                                }
+                            )
+                            if (meteringMode == MeteringMode.SPOT) {
+                                Box(
+                                    modifier = Modifier
+                                        .offset(
+                                            x = (spotMeteringPoint.first * 200 - 100).dp, // Approximation for UI
+                                            y = (spotMeteringPoint.second * 200 - 100).dp
+                                        )
+                                        .size(40.dp)
+                                        .border(2.dp, Color.White, CircleShape)
+                                )
+                            }
+                            Box(modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.5f)).padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                Text(text = "Live EV: $currentEv", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            Text("Camera permission needed for Live Meter.")
+                        }
                     }
                 }
             }
@@ -205,24 +245,10 @@ fun ExposureCalculatorScreen(
         item {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(modifier = Modifier.weight(1f)) {
-                    SettingDropDown(
-                        label = "Aperture",
-                        options = exposureViewModel.selectedProfile?.apertures?.map { "f/$it" } ?: emptyList(),
-                        selectedValue = selectedAperture?.let { "f/$it" },
-                        onValueSelected = { value -> value.substringAfter('/').toDoubleOrNull()?.let { exposureViewModel.onApertureSelected(it) } },
-                        enabled = selectedShutter == null,
-                        onClear = { exposureViewModel.clearApertureSelection() }
-                    )
+                    SettingDropDown(label = "Aperture", options = exposureViewModel.selectedProfile?.apertures?.map { "f/$it" } ?: emptyList(), selectedValue = selectedAperture?.let { "f/$it" }, onValueSelected = { value -> value.substringAfter('/').toDoubleOrNull()?.let { exposureViewModel.onApertureSelected(it) } }, enabled = selectedShutter == null, onClear = { exposureViewModel.clearApertureSelection() })
                 }
                 Box(modifier = Modifier.weight(1f)) {
-                    SettingDropDown(
-                        label = "Shutter Speed",
-                        options = exposureViewModel.selectedProfile?.shutterSpeeds?.map { "1/${it}s" } ?: emptyList(),
-                        selectedValue = selectedShutter?.let { "1/${it}s" },
-                        onValueSelected = { value -> value.substringAfter('/').substringBefore('s').toIntOrNull()?.let { exposureViewModel.onShutterSelected(it) } },
-                        enabled = selectedAperture == null,
-                        onClear = { exposureViewModel.clearShutterSelection() }
-                    )
+                    SettingDropDown(label = "Shutter Speed", options = exposureViewModel.selectedProfile?.shutterSpeeds?.map { "1/${it}s" } ?: emptyList(), selectedValue = selectedShutter?.let { "1/${it}s" }, onValueSelected = { value -> value.substringAfter('/').substringBefore('s').toIntOrNull()?.let { exposureViewModel.onShutterSelected(it) } }, enabled = selectedAperture == null, onClear = { exposureViewModel.clearShutterSelection() })
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
@@ -232,14 +258,12 @@ fun ExposureCalculatorScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
         if (allCombinations.isNotEmpty()) {
-            item {
-                AllCombinationsCard(combinations = allCombinations)
-            }
+            item { AllCombinationsCard(combinations = allCombinations) }
         }
     }
 }
 
-// --- NEW: Manage Profiles Screen ---
+// --- Manage Profiles Screen ---
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ManageProfilesScreen(
@@ -256,7 +280,7 @@ fun ManageProfilesScreen(
                 title = { Text("Manage Profiles") },
                 navigationIcon = {
                     IconButton(onClick = onBackPressed) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
@@ -283,13 +307,13 @@ fun ManageProfilesScreen(
                         }
                     }
                 )
-                Divider()
+                HorizontalDivider()
             }
         }
     }
 }
 
-// --- NEW: Profile Edit Screen ---
+// --- Profile Edit Screen ---
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileEditScreen(
@@ -311,7 +335,7 @@ fun ProfileEditScreen(
                 title = { Text(if (profileToEdit == null) "Add Profile" else "Edit Profile") },
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Cancel")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Cancel")
                     }
                 }
             )
@@ -321,24 +345,9 @@ fun ProfileEditScreen(
             modifier = Modifier.padding(paddingValues).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("Camera Name") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(
-                value = apertures,
-                onValueChange = { apertures = it },
-                label = { Text("Apertures (comma-separated)") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(
-                value = shutterSpeeds,
-                onValueChange = { shutterSpeeds = it },
-                label = { Text("Shutter Speeds (comma-separated)") },
-                modifier = Modifier.fillMaxWidth()
-            )
+            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Camera Name") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = apertures, onValueChange = { apertures = it }, label = { Text("Apertures (comma-separated)") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = shutterSpeeds, onValueChange = { shutterSpeeds = it }, label = { Text("Shutter Speeds (comma-separated)") }, modifier = Modifier.fillMaxWidth())
             Spacer(modifier = Modifier.weight(1f))
             Button(
                 onClick = {
@@ -358,24 +367,16 @@ fun ProfileEditScreen(
 }
 
 
-// ... (ResultCard, AllCombinationsCard, and other composables remain the same) ...
+// --- Reusable Composables ---
 @Composable
 fun ResultCard(result: CalculationResult?) {
     Card(modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(4.dp)) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (result == null) {
                 Text("Enter ISO and select a profile.", modifier = Modifier.padding(24.dp))
             } else {
                 Text("BEST EXPOSURE", style = MaterialTheme.typography.titleMedium)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("Aperture", style = MaterialTheme.typography.labelMedium)
                         Text("f/${result.suggestedAperture}", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
@@ -392,11 +393,7 @@ fun ResultCard(result: CalculationResult?) {
                     stopDiff > 0 -> "+%.1f stops (EV $resultingEvFormatted)".format(Locale.US, abs(stopDiff))
                     else -> "-%.1f stops (EV $resultingEvFormatted)".format(Locale.US, abs(stopDiff))
                 }
-                Text(
-                    text = stopText,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = if (abs(stopDiff) < 0.1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                )
+                Text(text = stopText, style = MaterialTheme.typography.bodyLarge, color = if (abs(stopDiff) < 0.1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
             }
         }
     }
@@ -411,7 +408,7 @@ fun AllCombinationsCard(combinations: List<ExposureCombination>) {
                 Text("Shutter", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
                 Text("Correction", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
             }
-            Divider(modifier = Modifier.padding(vertical = 4.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
             combinations.forEach { combo ->
                 Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("f/${combo.aperture}", modifier = Modifier.weight(1f))
@@ -491,4 +488,105 @@ fun LightingDropDown(selectedValue: Int, onValueSelected: (Int) -> Unit) {
             }
         }
     }
+}
+
+// --- CameraView Composable ---
+@Composable
+fun CameraView(
+    onEvCalculated: (Int) -> Unit,
+    iso: Double,
+    meteringMode: MeteringMode,
+    spotMeteringPoint: Pair<Float, Float>,
+    onTapToMeter: (Offset, IntSize) -> Unit
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
+    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+    var viewSize by remember { mutableStateOf(IntSize(0, 0)) }
+
+    val previewView = remember { PreviewView(context) }
+
+    LaunchedEffect(iso, meteringMode, spotMeteringPoint) {
+        val cameraProvider = cameraProviderFuture.get()
+        val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+        val imageAnalysis = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+            .also {
+                it.setAnalyzer(cameraExecutor, LuminosityAnalyzer(meteringMode, spotMeteringPoint) { luma ->
+                    val ev = luminosityToEv(luma, iso)
+                    onEvCalculated(ev)
+                })
+            }
+        val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+        try {
+            cameraProvider.unbindAll()
+            cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, imageAnalysis)
+        } catch (exc: Exception) {
+            Log.e("CameraView", "Use case binding failed", exc)
+        }
+    }
+
+    AndroidView(
+        factory = { previewView },
+        modifier = Modifier.fillMaxSize().pointerInput(Unit) {
+            detectTapGestures { offset ->
+                viewSize = size
+                onTapToMeter(offset, size)
+            }
+        }
+    )
+}
+
+// --- LuminosityAnalyzer Class ---
+class LuminosityAnalyzer(
+    private val meteringMode: MeteringMode,
+    private val spotMeteringPoint: Pair<Float, Float>,
+    private val onLuminosityCalculated: (Double) -> Unit
+) : ImageAnalysis.Analyzer {
+
+    private fun ByteBuffer.toByteArray(): ByteArray {
+        rewind()
+        val data = ByteArray(remaining())
+        get(data)
+        return data
+    }
+
+    override fun analyze(image: ImageProxy) {
+        val buffer = image.planes[0].buffer
+        val data = buffer.toByteArray()
+        val pixels = data.map { it.toInt() and 0xFF }
+
+        val luma = when (meteringMode) {
+            MeteringMode.AVERAGE -> pixels.average()
+            MeteringMode.SPOT -> {
+                val spotWidth = image.width * 0.1
+                val spotHeight = image.height * 0.1
+                val spotX = (spotMeteringPoint.first * image.width) - (spotWidth / 2)
+                val spotY = (spotMeteringPoint.second * image.height) - (spotHeight / 2)
+                var totalLuma = 0.0
+                var pixelCount = 0
+                for (y in spotY.toInt().. (spotY + spotHeight).toInt()) {
+                    for (x in spotX.toInt().. (spotX + spotWidth).toInt()) {
+                        if (x >= 0 && x < image.width && y >= 0 && y < image.height) {
+                            totalLuma += pixels[y * image.width + x]
+                            pixelCount++
+                        }
+                    }
+                }
+                if (pixelCount > 0) totalLuma / pixelCount else 0.0
+            }
+        }
+        onLuminosityCalculated(luma)
+        image.close()
+    }
+}
+
+fun luminosityToEv(luminosity: Double, iso: Double): Int {
+    if (luminosity <= 0) return 0
+    val k = 12.5
+    val ev100 = log2((luminosity * 100) / k)
+    val ev = ev100 - log2(iso / 100)
+    return ev.toInt()
 }
