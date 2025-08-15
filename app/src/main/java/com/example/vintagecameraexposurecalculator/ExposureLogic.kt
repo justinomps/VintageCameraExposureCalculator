@@ -1,30 +1,110 @@
-package com.example.vintageexposurecalculator // Make sure this package name matches yours
+package com.example.vintageexposurecalculator
+
 import kotlin.math.abs
 import kotlin.math.log2
 import kotlin.math.pow
-import kotlin.math.sqrt
-
-// Default camera values, similar to your JS constants
-val DEFAULT_APERTURES: List<Double> = listOf(1.0, 1.4, 1.8, 2.0, 2.8, 4.0, 5.6, 8.0, 11.0, 16.0, 22.0)
-val DEFAULT_SHUTTERS: List<Int> = listOf(8000, 4000, 2000, 1000, 500, 250, 125, 60, 30, 15, 8, 4, 2, 1)
+import kotlin.math.roundToInt
 
 /**
- * Calculates the ideal shutter speed based on the other parameters.
- * @param lightingEv The Exposure Value from the lighting condition (e.g., 15 for Sunny 16).
- * @param iso The selected film ISO.
- * @param aperture The selected f-number.
- * @return A formatted string representing the ideal shutter speed (e.g., "1 / 125s" or "2.0s").
+ * A data class to hold the results of a single, best-guess exposure calculation.
  */
-fun calculateShutterSpeed(lightingEv: Int, iso: Double, aperture: Double): String {
-    if (iso <= 0 || aperture <= 0) return "-"
+data class CalculationResult(
+    val suggestedAperture: Double,
+    val suggestedShutter: Int,
+    val resultingEv: Double,
+    val fStopDifference: Double
+)
 
-    // This formula combines the target EV calculation and the exposure formula
-    val targetEv = lightingEv + log2(iso / 100.0)
-    val shutterTime = (aperture.pow(2)) / (2.0.pow(targetEv))
+/**
+ * A data class to hold a single aperture/shutter combination from the full list.
+ */
+data class ExposureCombination(
+    val aperture: Double,
+    val closestShutter: Int,
+    val fStopDifference: Double
+)
 
-    return if (shutterTime >= 1) {
-        String.format("%.1fs", shutterTime)
+/**
+ * Finds the value in a list that is numerically closest to a target value.
+ */
+fun findClosest(target: Double, options: List<Double>): Double {
+    return options.minByOrNull { abs(target - it) } ?: 0.0
+}
+fun findClosest(target: Int, options: List<Int>): Int {
+    return options.minByOrNull { abs(target - it) } ?: 0
+}
+
+/**
+ * Calculates the best available camera settings based on a fixed aperture or shutter speed.
+ */
+fun calculateBestSetting(
+    lightingEv: Int,
+    iso: Double,
+    profile: CameraProfile,
+    fixedAperture: Double? = null,
+    fixedShutter: Int? = null
+): CalculationResult? {
+    if (iso <= 0) return null
+
+    val idealEv = lightingEv + log2(iso / 100.0)
+    var suggestedAperture: Double = fixedAperture ?: 0.0
+    var suggestedShutter: Int = fixedShutter ?: 0
+
+    if (fixedAperture != null) {
+        if (profile.shutterSpeeds.isEmpty()) return null
+        val idealShutterTime = fixedAperture.pow(2) / (2.0.pow(idealEv))
+        val idealShutterDenominator = (1 / idealShutterTime).roundToInt()
+        suggestedShutter = findClosest(idealShutterDenominator, profile.shutterSpeeds)
+    } else if (fixedShutter != null) {
+        if (profile.apertures.isEmpty()) return null
+        val idealAperture = kotlin.math.sqrt(fixedShutter * (2.0.pow(idealEv)))
+        suggestedAperture = findClosest(idealAperture, profile.apertures)
     } else {
-        "1 / ${Math.round(1 / shutterTime)}s"
+        return null
+    }
+
+    val resultingEv = log2(suggestedAperture.pow(2) * suggestedShutter)
+    val fStopDifference = resultingEv - idealEv
+
+    return CalculationResult(
+        suggestedAperture = suggestedAperture,
+        suggestedShutter = suggestedShutter,
+        resultingEv = resultingEv,
+        fStopDifference = fStopDifference
+    )
+}
+
+/**
+ * Calculates all possible exposure combinations for a given camera profile.
+ *
+ * @return A list of ExposureCombination objects, one for each aperture in the profile.
+ */
+fun calculateAllCombinations(
+    lightingEv: Int,
+    iso: Double,
+    profile: CameraProfile
+): List<ExposureCombination> {
+    if (iso <= 0 || profile.apertures.isEmpty() || profile.shutterSpeeds.isEmpty()) {
+        return emptyList()
+    }
+
+    // Calculate the ideal EV for the scene
+    val idealEv = lightingEv + log2(iso / 100.0)
+
+    // For each aperture in the profile, find the best corresponding shutter speed
+    return profile.apertures.map { aperture ->
+        val idealShutterTime = aperture.pow(2) / (2.0.pow(idealEv))
+        val idealShutterDenominator = (1 / idealShutterTime).roundToInt()
+        val closestShutter = findClosest(idealShutterDenominator, profile.shutterSpeeds)
+
+        // Calculate the resulting EV and the difference in f-stops
+        val resultingEv = log2(aperture.pow(2) * closestShutter)
+        val fStopDifference = resultingEv - idealEv
+
+        ExposureCombination(
+            aperture = aperture,
+            closestShutter = closestShutter,
+            fStopDifference = fStopDifference
+        )
     }
 }
