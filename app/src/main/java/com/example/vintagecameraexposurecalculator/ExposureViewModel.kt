@@ -16,7 +16,6 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
 
     // --- State ---
     private val _iso = mutableStateOf("100")
-    // This now represents the EV from the manual dropdown
     private val _manualLightingEv = mutableStateOf(15)
     private val _cameraProfiles = mutableStateOf<List<CameraProfile>>(emptyList())
     private val _selectedProfileId = mutableStateOf<String?>(null)
@@ -24,20 +23,22 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
     private val _selectedShutter = mutableStateOf<Int?>(null)
     private val _result = mutableStateOf<CalculationResult?>(null)
     private val _allCombinations = mutableStateOf<List<ExposureCombination>>(emptyList())
-    // NEW: This holds the EV value used for calculations, from either manual or live source.
     private val _currentEv = mutableStateOf(15)
+    private val _bestOverallResult = mutableStateOf<CalculationResult?>(null)
 
 
     // --- Public Immutable States ---
     val iso: State<String> = _iso
-    val lightingEv: State<Int> = _manualLightingEv // UI binds to the manual selection
+    val lightingEv: State<Int> = _manualLightingEv
     val cameraProfiles: State<List<CameraProfile>> = _cameraProfiles
     val selectedProfileId: State<String?> = _selectedProfileId
     val selectedAperture: State<Double?> = _selectedAperture
     val selectedShutter: State<Int?> = _selectedShutter
     val result: State<CalculationResult?> = _result
     val allCombinations: State<List<ExposureCombination>> = _allCombinations
-    val currentEv: State<Int> = _currentEv // For display in Live Meter mode
+    val currentEv: State<Int> = _currentEv
+    val bestOverallResult: State<CalculationResult?> = _bestOverallResult
+
 
     val selectedProfile: CameraProfile?
         get() = _cameraProfiles.value.find { it.id == _selectedProfileId.value }
@@ -53,13 +54,11 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
         recalculate()
     }
 
-    // Updated to set the manual EV and then call the general EV update function
     fun onLightingChanged(newEv: Int) {
         _manualLightingEv.value = newEv
         onEvChanged(newEv)
     }
 
-    // NEW: General function to update the EV used for calculations
     fun onEvChanged(newEv: Int) {
         _currentEv.value = newEv
         recalculate()
@@ -95,6 +94,7 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
         recalculate()
     }
 
+    // --- NEW: Profile Management Functions ---
     fun addCameraProfile(name: String, aperturesStr: String, shuttersStr: String) {
         try {
             val apertures = aperturesStr.split(',').mapNotNull { it.trim().toDoubleOrNull() }.sorted()
@@ -103,6 +103,7 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
             if (name.isNotBlank() && apertures.isNotEmpty() && shutterSpeeds.isNotEmpty()) {
                 val newProfile = CameraProfile(name, apertures, shutterSpeeds)
                 _cameraProfiles.value += newProfile
+                saveProfiles() // Save after adding
                 onProfileSelected(newProfile.id)
             }
         } catch (e: Exception) {
@@ -110,10 +111,42 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun updateCameraProfile(profileId: String, name: String, aperturesStr: String, shuttersStr: String) {
+        try {
+            val apertures = aperturesStr.split(',').mapNotNull { it.trim().toDoubleOrNull() }.sorted()
+            val shutterSpeeds = shuttersStr.split(',').mapNotNull { it.trim().toIntOrNull() }.sortedDescending()
+
+            if (name.isNotBlank() && apertures.isNotEmpty() && shutterSpeeds.isNotEmpty()) {
+                val updatedProfiles = _cameraProfiles.value.map {
+                    if (it.id == profileId) {
+                        it.copy(name = name, apertures = apertures, shutterSpeeds = shutterSpeeds)
+                    } else {
+                        it
+                    }
+                }
+                _cameraProfiles.value = updatedProfiles
+                saveProfiles() // Save after updating
+            }
+        } catch (e: Exception) {
+            Log.e("ExposureViewModel", "Failed to update profile", e)
+        }
+    }
+
+    fun deleteCameraProfile(profileId: String) {
+        _cameraProfiles.value = _cameraProfiles.value.filterNot { it.id == profileId }
+        // If the deleted profile was the selected one, select the first available profile
+        if (_selectedProfileId.value == profileId) {
+            onProfileSelected(_cameraProfiles.value.firstOrNull()?.id ?: "")
+        }
+        saveProfiles() // Save after deleting
+    }
+
+
     // --- Persistence ---
     private fun saveProfiles() {
         val json = gson.toJson(_cameraProfiles.value)
         sharedPreferences.edit().putString("CAMERA_PROFILES_LIST", json).apply()
+        Log.d("ExposureViewModel", "Profiles saved successfully.")
     }
 
     private fun loadProfiles() {
@@ -132,9 +165,8 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
             saveProfiles()
         } else {
             _cameraProfiles.value = profiles
-            _selectedProfileId.value = sharedPreferences.getString("SELECTED_PROFILE_ID", profiles.first().id)
+            _selectedProfileId.value = sharedPreferences.getString("SELECTED_PROFILE_ID", profiles.firstOrNull()?.id)
         }
-        // Initialize the current EV with the manual one
         _currentEv.value = _manualLightingEv.value
     }
 
@@ -143,26 +175,32 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
         val isoNum = _iso.value.toDoubleOrNull()
         val profile = selectedProfile
 
-        if (isoNum == null || profile == null || (_selectedAperture.value == null && _selectedShutter.value == null)) {
-            _result.value = null
-        } else {
+        if (isoNum != null && profile != null && (_selectedAperture.value != null || _selectedShutter.value != null)) {
             _result.value = calculateBestSetting(
-                lightingEv = _currentEv.value, // Use the current EV for all calcs
+                lightingEv = _currentEv.value,
                 iso = isoNum,
                 profile = profile,
                 fixedAperture = _selectedAperture.value,
                 fixedShutter = _selectedShutter.value
             )
+        } else {
+            _result.value = null
         }
 
         if (isoNum != null && profile != null) {
             _allCombinations.value = calculateAllCombinations(
-                lightingEv = _currentEv.value, // Use the current EV for all calcs
+                lightingEv = _currentEv.value,
+                iso = isoNum,
+                profile = profile
+            )
+            _bestOverallResult.value = calculateBestOverallSetting(
+                lightingEv = _currentEv.value,
                 iso = isoNum,
                 profile = profile
             )
         } else {
             _allCombinations.value = emptyList()
+            _bestOverallResult.value = null
         }
     }
 }

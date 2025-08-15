@@ -5,9 +5,6 @@ import kotlin.math.log2
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
-/**
- * A data class to hold the results of a single, best-guess exposure calculation.
- */
 data class CalculationResult(
     val suggestedAperture: Double,
     val suggestedShutter: Int,
@@ -15,18 +12,12 @@ data class CalculationResult(
     val fStopDifference: Double
 )
 
-/**
- * A data class to hold a single aperture/shutter combination from the full list.
- */
 data class ExposureCombination(
     val aperture: Double,
     val closestShutter: Int,
     val fStopDifference: Double
 )
 
-/**
- * Finds the value in a list that is numerically closest to a target value.
- */
 fun findClosest(target: Double, options: List<Double>): Double {
     return options.minByOrNull { abs(target - it) } ?: 0.0
 }
@@ -34,9 +25,6 @@ fun findClosest(target: Int, options: List<Int>): Int {
     return options.minByOrNull { abs(target - it) } ?: 0
 }
 
-/**
- * Calculates the best available camera settings based on a fixed aperture or shutter speed.
- */
 fun calculateBestSetting(
     lightingEv: Int,
     iso: Double,
@@ -74,11 +62,6 @@ fun calculateBestSetting(
     )
 }
 
-/**
- * Calculates all possible exposure combinations for a given camera profile.
- *
- * @return A list of ExposureCombination objects, one for each aperture in the profile.
- */
 fun calculateAllCombinations(
     lightingEv: Int,
     iso: Double,
@@ -87,24 +70,44 @@ fun calculateAllCombinations(
     if (iso <= 0 || profile.apertures.isEmpty() || profile.shutterSpeeds.isEmpty()) {
         return emptyList()
     }
-
-    // Calculate the ideal EV for the scene
     val idealEv = lightingEv + log2(iso / 100.0)
-
-    // For each aperture in the profile, find the best corresponding shutter speed
     return profile.apertures.map { aperture ->
         val idealShutterTime = aperture.pow(2) / (2.0.pow(idealEv))
         val idealShutterDenominator = (1 / idealShutterTime).roundToInt()
         val closestShutter = findClosest(idealShutterDenominator, profile.shutterSpeeds)
-
-        // Calculate the resulting EV and the difference in f-stops
         val resultingEv = log2(aperture.pow(2) * closestShutter)
         val fStopDifference = resultingEv - idealEv
-
         ExposureCombination(
             aperture = aperture,
             closestShutter = closestShutter,
             fStopDifference = fStopDifference
         )
     }
+}
+
+/**
+ * NEW: Calculates the single best overall exposure setting from a profile.
+ * It finds the combination with the smallest f-stop difference.
+ */
+fun calculateBestOverallSetting(
+    lightingEv: Int,
+    iso: Double,
+    profile: CameraProfile
+): CalculationResult? {
+    // First, get all possible combinations
+    val allCombinations = calculateAllCombinations(lightingEv, iso, profile)
+    if (allCombinations.isEmpty()) return null
+
+    // Find the combination with the minimum absolute f-stop difference
+    val bestCombination = allCombinations.minByOrNull { abs(it.fStopDifference) } ?: return null
+
+    // Convert the best combination into a CalculationResult
+    val resultingEv = log2(bestCombination.aperture.pow(2) * bestCombination.closestShutter)
+
+    return CalculationResult(
+        suggestedAperture = bestCombination.aperture,
+        suggestedShutter = bestCombination.closestShutter,
+        resultingEv = resultingEv,
+        fStopDifference = bestCombination.fStopDifference
+    )
 }
