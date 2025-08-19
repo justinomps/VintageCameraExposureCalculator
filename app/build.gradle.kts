@@ -1,7 +1,6 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    // This is the new line that fixes the error
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
@@ -41,8 +40,6 @@ android {
     buildFeatures {
         compose = true
     }
-    // The composeOptions block is no longer needed with the new plugin
-    // so it has been removed.
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -54,8 +51,9 @@ dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.activity:activity-compose:1.8.2")
-    // Updated BOM to a more recent version
-    implementation(platform("androidx.compose:compose-bom:2024.02.01"))
+
+    // Updated BOM to a more recent version to support modern APIs
+    implementation(platform("androidx.compose:compose-bom:2024.05.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
@@ -71,13 +69,14 @@ dependencies {
     // Gson for persistence
     implementation("com.google.code.gson:gson:2.10.1")
 
+    // Navigation
+    implementation("androidx.navigation:navigation-compose:2.7.7")
+
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-    androidTestImplementation(platform("androidx.compose:compose-bom:2024.02.01"))
+    androidTestImplementation(platform("androidx.compose:compose-bom:2024.05.00"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
-    implementation("androidx.navigation:navigation-compose:2.7.7")
-    implementation("androidx.navigation:navigation-compose:2.7.7")
 }

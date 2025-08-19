@@ -3,8 +3,9 @@ package com.example.vintageexposurecalculator
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.util.Log // <-- THIS IMPORT WAS MISSING
+import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
@@ -13,6 +14,7 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -31,9 +33,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -54,7 +57,6 @@ import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.log2
-import androidx.activity.compose.rememberLauncherForActivityResult
 
 // --- Data Classes and Constants ---
 data class LightingOption(val label: String, val ev: Int)
@@ -67,7 +69,7 @@ val lightingOptions = listOf(
     LightingOption("Open Shade/Sunset (EV 11)", 11),
     LightingOption("Dim Indoors (EV 8)", 8)
 )
-enum class MeteringMode { AVERAGE, SPOT }
+// MeteringMode is now in its own file
 
 // --- Main Activity ---
 class MainActivity : ComponentActivity() {
@@ -75,32 +77,34 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             VintageExposureCalculatorTheme {
-                val navController = rememberNavController()
-                val exposureViewModel: ExposureViewModel = viewModel()
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    val navController = rememberNavController()
+                    val exposureViewModel: ExposureViewModel = viewModel()
 
-                NavHost(navController = navController, startDestination = "main") {
-                    composable("main") {
-                        ExposureCalculatorScreen(
-                            exposureViewModel = exposureViewModel,
-                            onManageProfilesClicked = { navController.navigate("manage_profiles") }
-                        )
-                    }
-                    composable("manage_profiles") {
-                        ManageProfilesScreen(
-                            exposureViewModel = exposureViewModel,
-                            onBackPressed = { navController.popBackStack() },
-                            onEditProfile = { profileId -> navController.navigate("edit_profile/$profileId") },
-                            onAddProfile = { navController.navigate("edit_profile/new") }
-                        )
-                    }
-                    composable("edit_profile/{profileId}") { backStackEntry ->
-                        val profileId = backStackEntry.arguments?.getString("profileId")
-                        ProfileEditScreen(
-                            profileId = if (profileId == "new") null else profileId,
-                            exposureViewModel = exposureViewModel,
-                            onSave = { navController.popBackStack() },
-                            onCancel = { navController.popBackStack() }
-                        )
+                    NavHost(navController = navController, startDestination = "main") {
+                        composable("main") {
+                            ExposureCalculatorScreen(
+                                exposureViewModel = exposureViewModel,
+                                onManageProfilesClicked = { navController.navigate("manage_profiles") }
+                            )
+                        }
+                        composable("manage_profiles") {
+                            ManageProfilesScreen(
+                                exposureViewModel = exposureViewModel,
+                                onBackPressed = { navController.popBackStack() },
+                                onEditProfile = { profileId -> navController.navigate("edit_profile/$profileId") },
+                                onAddProfile = { navController.navigate("edit_profile/new") }
+                            )
+                        }
+                        composable("edit_profile/{profileId}") { backStackEntry ->
+                            val profileId = backStackEntry.arguments?.getString("profileId")
+                            ProfileEditScreen(
+                                profileId = if (profileId == "new") null else profileId,
+                                exposureViewModel = exposureViewModel,
+                                onSave = { navController.popBackStack() },
+                                onCancel = { navController.popBackStack() }
+                            )
+                        }
                     }
                 }
             }
@@ -143,7 +147,7 @@ fun ExposureCalculatorScreen(
         contentPadding = PaddingValues(bottom = 16.dp)
     ) {
         item {
-            Text("Vintage Exposure", style = MaterialTheme.typography.headlineLarge)
+            Text("VINTAGE EXPOSURE", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
             Spacer(modifier = Modifier.height(16.dp))
         }
         item {
@@ -156,16 +160,16 @@ fun ExposureCalculatorScreen(
                     )
                 }
                 IconButton(onClick = onManageProfilesClicked) {
-                    Icon(Icons.Default.Edit, contentDescription = "Manage Camera Profiles")
+                    Icon(Icons.Default.Edit, contentDescription = "Manage Camera Profiles", tint = MaterialTheme.colorScheme.primary)
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
         }
         item {
-            OutlinedTextField(
+            ArtDecoOutlinedTextField(
                 value = iso,
                 onValueChange = { exposureViewModel.onIsoChanged(it) },
-                label = { Text("Film ISO") },
+                label = { Text("FILM ISO") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth()
             )
@@ -183,10 +187,18 @@ fun ExposureCalculatorScreen(
                             selectedMode = label
                             if (label == "Manual EV") {
                                 exposureViewModel.onLightingChanged(lightingEv)
+                                exposureViewModel.stopIncidentMetering() // Stop sensor when switching away
                             }
                         },
-                        selected = label == selectedMode
-                    ) { Text(label) }
+                        selected = label == selectedMode,
+                        colors = SegmentedButtonDefaults.colors(
+                            activeContainerColor = MaterialTheme.colorScheme.primary,
+                            activeContentColor = MaterialTheme.colorScheme.onPrimary,
+                            inactiveContainerColor = Color.Transparent,
+                            inactiveContentColor = MaterialTheme.colorScheme.onBackground,
+                            inactiveBorderColor = MaterialTheme.colorScheme.outline
+                        )
+                    ) { Text(label.uppercase()) }
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
@@ -199,43 +211,85 @@ fun ExposureCalculatorScreen(
                 )
             } else {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val meteringModes = listOf(MeteringMode.AVERAGE, MeteringMode.SPOT)
+                    val meteringModes = listOf(MeteringMode.AVERAGE, MeteringMode.SPOT, MeteringMode.INCIDENT)
                     SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                         meteringModes.forEachIndexed { index, mode ->
                             SegmentedButton(
                                 shape = SegmentedButtonDefaults.itemShape(index = index, count = meteringModes.size),
                                 onClick = { exposureViewModel.onMeteringModeChanged(mode) },
-                                selected = mode == meteringMode
-                            ) { Text(mode.name.lowercase().replaceFirstChar { it.titlecase() }) }
+                                selected = mode == meteringMode,
+                                colors = SegmentedButtonDefaults.colors(
+                                    activeContainerColor = MaterialTheme.colorScheme.primary,
+                                    activeContentColor = MaterialTheme.colorScheme.onPrimary,
+                                    inactiveContainerColor = Color.Transparent,
+                                    inactiveContentColor = MaterialTheme.colorScheme.onBackground,
+                                    inactiveBorderColor = MaterialTheme.colorScheme.outline
+                                )
+                            ) { Text(mode.name) }
                         }
                     }
-                    Box(modifier = Modifier.fillMaxWidth().height(200.dp).clip(MaterialTheme.shapes.medium), contentAlignment = Alignment.Center) {
-                        if (hasCameraPermission) {
-                            CameraView(
-                                onEvCalculated = { ev -> exposureViewModel.onEvChanged(ev) },
-                                iso = iso.toDoubleOrNull() ?: 100.0,
-                                meteringMode = meteringMode,
-                                spotMeteringPoint = spotMeteringPoint,
-                                onTapToMeter = { offset, size ->
-                                    exposureViewModel.onTapToMeter(Pair(offset.x / size.width, offset.y / size.height))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp)
+                            .clipToBounds(), // <-- CORRECTED LINE
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (meteringMode == MeteringMode.AVERAGE || meteringMode == MeteringMode.SPOT) {
+                            if (hasCameraPermission) {
+                                CameraView(
+                                    onEvCalculated = { ev -> exposureViewModel.onEvChanged(ev) },
+                                    iso = iso.toDoubleOrNull() ?: 100.0,
+                                    meteringMode = meteringMode,
+                                    spotMeteringPoint = spotMeteringPoint,
+                                    onTapToMeter = { offset, size ->
+                                        exposureViewModel.onTapToMeter(Pair(offset.x / size.width, offset.y / size.height))
+                                    }
+                                )
+                                if (meteringMode == MeteringMode.SPOT) {
+                                    Box(
+                                        modifier = Modifier
+                                            .offset(
+                                                x = (spotMeteringPoint.first * 200 - 100).dp, // Approximation for UI
+                                                y = (spotMeteringPoint.second * 200 - 100).dp
+                                            )
+                                            .size(40.dp)
+                                            .border(2.dp, Color.White, CircleShape)
+                                    )
                                 }
-                            )
-                            if (meteringMode == MeteringMode.SPOT) {
                                 Box(
-                                    modifier = Modifier
-                                        .offset(
-                                            x = (spotMeteringPoint.first * 200 - 100).dp, // Approximation for UI
-                                            y = (spotMeteringPoint.second * 200 - 100).dp
-                                        )
-                                        .size(40.dp)
-                                        .border(2.dp, Color.White, CircleShape)
+                                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
+                                        .background(MaterialTheme.colorScheme.background.copy(alpha = 0.7f))
+                                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                                ) {
+                                    Text(
+                                        text = "LIVE EV: $currentEv",
+                                        color = MaterialTheme.colorScheme.onBackground,
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                }
+                            } else {
+                                Text("Camera permission needed for Live Meter.")
+                            }
+                        } else { // Incident Mode
+                            Column(
+                                modifier = Modifier.fillMaxHeight(),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Text(
+                                    "Point front sensor towards light source",
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "EV ${exposureViewModel.incidentLightingEv.value}",
+                                    style = MaterialTheme.typography.displayLarge,
+                                    color = MaterialTheme.colorScheme.primary
                                 )
                             }
-                            Box(modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.5f)).padding(horizontal = 12.dp, vertical = 8.dp)) {
-                                Text(text = "Live EV: $currentEv", color = Color.White, fontWeight = FontWeight.Bold)
-                            }
-                        } else {
-                            Text("Camera permission needed for Live Meter.")
                         }
                     }
                 }
@@ -248,7 +302,7 @@ fun ExposureCalculatorScreen(
                     SettingDropDown(label = "Aperture", options = exposureViewModel.selectedProfile?.apertures?.map { "f/$it" } ?: emptyList(), selectedValue = selectedAperture?.let { "f/$it" }, onValueSelected = { value -> value.substringAfter('/').toDoubleOrNull()?.let { exposureViewModel.onApertureSelected(it) } }, enabled = selectedShutter == null, onClear = { exposureViewModel.clearApertureSelection() })
                 }
                 Box(modifier = Modifier.weight(1f)) {
-                    SettingDropDown(label = "Shutter Speed", options = exposureViewModel.selectedProfile?.shutterSpeeds?.map { "1/${it}s" } ?: emptyList(), selectedValue = selectedShutter?.let { "1/${it}s" }, onValueSelected = { value -> value.substringAfter('/').substringBefore('s').toIntOrNull()?.let { exposureViewModel.onShutterSelected(it) } }, enabled = selectedAperture == null, onClear = { exposureViewModel.clearShutterSelection() })
+                    SettingDropDown(label = "Shutter", options = exposureViewModel.selectedProfile?.shutterSpeeds?.map { "1/${it}s" } ?: emptyList(), selectedValue = selectedShutter?.let { "1/${it}s" }, onValueSelected = { value -> value.substringAfter('/').substringBefore('s').toIntOrNull()?.let { exposureViewModel.onShutterSelected(it) } }, enabled = selectedAperture == null, onClear = { exposureViewModel.clearShutterSelection() })
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
@@ -275,18 +329,27 @@ fun ManageProfilesScreen(
     val profiles by exposureViewModel.cameraProfiles
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Manage Profiles") },
+                title = { Text("MANAGE PROFILES", style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
                     IconButton(onClick = onBackPressed) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.primary)
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    titleContentColor = MaterialTheme.colorScheme.primary
+                )
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onAddProfile) {
+            FloatingActionButton(
+                onClick = onAddProfile,
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
+            ) {
                 Icon(Icons.Default.Add, contentDescription = "Add Profile")
             }
         }
@@ -294,20 +357,25 @@ fun ManageProfilesScreen(
         LazyColumn(contentPadding = paddingValues) {
             items(profiles) { profile ->
                 ListItem(
-                    headlineContent = { Text(profile.name) },
-                    supportingContent = { Text("${profile.apertures.size} apertures, ${profile.shutterSpeeds.size} shutter speeds") },
+                    headlineContent = { Text(profile.name, style = MaterialTheme.typography.bodyLarge) },
+                    supportingContent = { Text("${profile.apertures.size} apertures, ${profile.shutterSpeeds.size} shutter speeds", style = MaterialTheme.typography.labelMedium) },
                     trailingContent = {
                         Row {
                             IconButton(onClick = { onEditProfile(profile.id) }) {
-                                Icon(Icons.Default.Edit, contentDescription = "Edit")
+                                Icon(Icons.Default.Edit, contentDescription = "Edit", tint = MaterialTheme.colorScheme.primary)
                             }
                             IconButton(onClick = { exposureViewModel.deleteCameraProfile(profile.id) }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete")
+                                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
                             }
                         }
-                    }
+                    },
+                    colors = ListItemDefaults.colors(
+                        containerColor = Color.Transparent,
+                        headlineColor = MaterialTheme.colorScheme.onBackground,
+                        supportingColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+                    )
                 )
-                HorizontalDivider()
+                HorizontalDivider(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
             }
         }
     }
@@ -330,14 +398,19 @@ fun ProfileEditScreen(
     var shutterSpeeds by remember { mutableStateOf(profileToEdit?.shutterSpeeds?.joinToString(", ") ?: "") }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text(if (profileToEdit == null) "Add Profile" else "Edit Profile") },
+                title = { Text(if (profileToEdit == null) "ADD PROFILE" else "EDIT PROFILE", style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
                     IconButton(onClick = onCancel) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Cancel")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Cancel", tint = MaterialTheme.colorScheme.primary)
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    titleContentColor = MaterialTheme.colorScheme.primary
+                )
             )
         }
     ) { paddingValues ->
@@ -345,9 +418,9 @@ fun ProfileEditScreen(
             modifier = Modifier.padding(paddingValues).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Camera Name") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = apertures, onValueChange = { apertures = it }, label = { Text("Apertures (comma-separated)") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = shutterSpeeds, onValueChange = { shutterSpeeds = it }, label = { Text("Shutter Speeds (comma-separated)") }, modifier = Modifier.fillMaxWidth())
+            ArtDecoOutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("CAMERA NAME") }, modifier = Modifier.fillMaxWidth())
+            ArtDecoOutlinedTextField(value = apertures, onValueChange = { apertures = it }, label = { Text("APERTURES (COMMA-SEPARATED)") }, modifier = Modifier.fillMaxWidth())
+            ArtDecoOutlinedTextField(value = shutterSpeeds, onValueChange = { shutterSpeeds = it }, label = { Text("SHUTTER SPEEDS (COMMA-SEPARATED)") }, modifier = Modifier.fillMaxWidth())
             Spacer(modifier = Modifier.weight(1f))
             Button(
                 onClick = {
@@ -358,9 +431,10 @@ fun ProfileEditScreen(
                     }
                     onSave()
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
-                Text("Save")
+                Text("SAVE", color = MaterialTheme.colorScheme.onPrimary)
             }
         }
     }
@@ -370,10 +444,13 @@ fun ProfileEditScreen(
 // --- Reusable Composables ---
 @Composable
 fun ResultCard(result: CalculationResult?) {
-    Card(modifier = Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(4.dp)) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (result == null) {
-                Text("Enter ISO and select a profile.", modifier = Modifier.padding(24.dp))
+                Text("ENTER ISO AND SELECT A PROFILE.", modifier = Modifier.padding(24.dp), style = MaterialTheme.typography.labelMedium)
             } else {
                 Text("BEST EXPOSURE", style = MaterialTheme.typography.titleMedium)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
@@ -400,26 +477,29 @@ fun ResultCard(result: CalculationResult?) {
 }
 @Composable
 fun AllCombinationsCard(combinations: List<ExposureCombination>) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text("Exposure Options", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
+            Text("EXPOSURE OPTIONS", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Aperture", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                Text("Shutter", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
-                Text("Correction", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
+                Text("Aperture", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+                Text("Shutter", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
+                Text("Correction", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
             }
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
             combinations.forEach { combo ->
                 Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("f/${combo.aperture}", modifier = Modifier.weight(1f))
-                    Text("1/${combo.closestShutter}s", modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
+                    Text("f/${combo.aperture}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                    Text("1/${combo.closestShutter}s", modifier = Modifier.weight(1f), textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyLarge)
                     val stopDiff = combo.fStopDifference
                     val stopText = when {
                         abs(stopDiff) < 0.1 -> "Perfect"
                         stopDiff > 0 -> "+%.1f".format(Locale.US, abs(stopDiff))
                         else -> "-%.1f".format(Locale.US, abs(stopDiff))
                     }
-                    Text(text = stopText, modifier = Modifier.weight(1f), textAlign = TextAlign.End, color = if (abs(stopDiff) < 0.1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f))
+                    Text(text = stopText, modifier = Modifier.weight(1f), textAlign = TextAlign.End, color = if (abs(stopDiff) < 0.1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), style = MaterialTheme.typography.bodyLarge)
                 }
             }
         }
@@ -430,65 +510,142 @@ fun AllCombinationsCard(combinations: List<ExposureCombination>) {
 fun SettingDropDown(label: String, options: List<String>, selectedValue: String?, onValueSelected: (String) -> Unit, enabled: Boolean, onClear: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded && enabled, onExpandedChange = { if (enabled) expanded = !expanded }) {
-        OutlinedTextField(
+        ArtDecoOutlinedTextField(
             modifier = Modifier.menuAnchor().fillMaxWidth(),
             readOnly = true,
             value = selectedValue ?: "",
             onValueChange = {},
-            label = { Text(label) },
+            label = { Text(label.uppercase()) },
             trailingIcon = {
                 if (selectedValue != null) {
-                    IconButton(onClick = onClear) { Icon(Icons.Default.Clear, contentDescription = "Clear selection") }
+                    IconButton(onClick = onClear) { Icon(Icons.Default.Clear, contentDescription = "Clear selection", tint = MaterialTheme.colorScheme.primary) }
                 } else {
                     ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
                 }
             },
             enabled = enabled
         )
-        ExposedDropdownMenu(expanded = expanded && enabled, onDismissRequest = { expanded = false }) {
+        ExposedDropdownMenu(
+            expanded = expanded && enabled,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+        ) {
             options.forEach { option ->
-                DropdownMenuItem(text = { Text(option) }, onClick = {
-                    onValueSelected(option)
-                    expanded = false
-                })
+                DropdownMenuItem(
+                    text = { Text(option, style = MaterialTheme.typography.bodyLarge) },
+                    onClick = {
+                        onValueSelected(option)
+                        expanded = false
+                    },
+                    colors = MenuDefaults.itemColors(
+                        textColor = MaterialTheme.colorScheme.onSurface,
+                    )
+                )
             }
         }
     }
 }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CameraProfileDropDown(profiles: List<CameraProfile>, selectedProfileId: String?, onProfileSelected: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     val selectedProfile = profiles.find { it.id == selectedProfileId }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }, modifier = Modifier.fillMaxWidth()) {
-        OutlinedTextField(modifier = Modifier.menuAnchor().fillMaxWidth(), readOnly = true, value = selectedProfile?.name ?: "No Profile Selected", onValueChange = {}, label = { Text("Camera Profile") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) })
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        ArtDecoOutlinedTextField(
+            modifier = Modifier.menuAnchor().fillMaxWidth(),
+            readOnly = true,
+            value = selectedProfile?.name ?: "NO PROFILE SELECTED",
+            onValueChange = {},
+            label = { Text("CAMERA PROFILE") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) }
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+        ) {
             profiles.forEach { profile ->
-                DropdownMenuItem(text = { Text(profile.name) }, onClick = {
-                    onProfileSelected(profile.id)
-                    expanded = false
-                }, contentPadding = PaddingValues(horizontal = 16.dp))
+                DropdownMenuItem(
+                    text = { Text(profile.name, style = MaterialTheme.typography.bodyLarge) },
+                    onClick = {
+                        onProfileSelected(profile.id)
+                        expanded = false
+                    },
+                    colors = MenuDefaults.itemColors(textColor = MaterialTheme.colorScheme.onSurface),
+                    contentPadding = PaddingValues(horizontal = 16.dp)
+                )
             }
         }
     }
 }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LightingDropDown(selectedValue: Int, onValueSelected: (Int) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     val selectedOption = lightingOptions.find { it.ev == selectedValue } ?: lightingOptions[0]
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }, modifier = Modifier.fillMaxWidth()) {
-        OutlinedTextField(modifier = Modifier.menuAnchor().fillMaxWidth(), readOnly = true, value = selectedOption.label, onValueChange = {}, label = { Text("Lighting Condition") }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) })
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        ArtDecoOutlinedTextField(
+            modifier = Modifier.menuAnchor().fillMaxWidth(),
+            readOnly = true,
+            value = selectedOption.label.uppercase(),
+            onValueChange = {},
+            label = { Text("LIGHTING CONDITION") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) }
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+        ) {
             lightingOptions.forEach { selectionOption ->
-                DropdownMenuItem(text = { Text(selectionOption.label) }, onClick = {
-                    onValueSelected(selectionOption.ev)
-                    expanded = false
-                }, contentPadding = PaddingValues(horizontal = 16.dp))
+                DropdownMenuItem(
+                    text = { Text(selectionOption.label, style = MaterialTheme.typography.bodyLarge) },
+                    onClick = {
+                        onValueSelected(selectionOption.ev)
+                        expanded = false
+                    },
+                    colors = MenuDefaults.itemColors(textColor = MaterialTheme.colorScheme.onSurface),
+                    contentPadding = PaddingValues(horizontal = 16.dp)
+                )
             }
         }
     }
 }
+
+@Composable
+fun ArtDecoOutlinedTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    label: @Composable (() -> Unit)? = null,
+    trailingIcon: @Composable (() -> Unit)? = null,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    readOnly: Boolean = false,
+    enabled: Boolean = true
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = modifier,
+        label = label,
+        trailingIcon = trailingIcon,
+        readOnly = readOnly,
+        enabled = enabled,
+        keyboardOptions = keyboardOptions,
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = MaterialTheme.colorScheme.primary,
+            unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+            focusedLabelColor = MaterialTheme.colorScheme.primary,
+            unfocusedLabelColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+            cursorColor = MaterialTheme.colorScheme.primary,
+            focusedTextColor = MaterialTheme.colorScheme.onBackground,
+            unfocusedTextColor = MaterialTheme.colorScheme.onBackground
+        )
+    )
+}
+
 
 // --- CameraView Composable ---
 @Composable
@@ -530,12 +687,14 @@ fun CameraView(
 
     AndroidView(
         factory = { previewView },
-        modifier = Modifier.fillMaxSize().pointerInput(Unit) {
-            detectTapGestures { offset ->
-                viewSize = size
-                onTapToMeter(offset, size)
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectTapGestures { offset ->
+                    viewSize = size
+                    onTapToMeter(offset, size)
+                }
             }
-        }
     )
 }
 
@@ -577,6 +736,8 @@ class LuminosityAnalyzer(
                 }
                 if (pixelCount > 0) totalLuma / pixelCount else 0.0
             }
+            // Incident is handled by the sensor, not here
+            MeteringMode.INCIDENT -> 0.0
         }
         onLuminosityCalculated(luma)
         image.close()

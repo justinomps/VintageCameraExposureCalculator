@@ -1,2 +1,5 @@
-package com.example.vintagecameraexposurecalculator
+package com.example.vintageexposurecalculator
 
+enum class MeteringMode {
+    AVERAGE, SPOT, INCIDENT
+}

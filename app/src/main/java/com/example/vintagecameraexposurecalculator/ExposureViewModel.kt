@@ -2,18 +2,24 @@ package com.example.vintageexposurecalculator
 
 import android.app.Application
 import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.util.Log
-import androidx.compose.ui.geometry.Offset
-import androidx.lifecycle.AndroidViewModel
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.AndroidViewModel
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import kotlin.math.log2
 
-class ExposureViewModel(application: Application) : AndroidViewModel(application) {
+class ExposureViewModel(application: Application) : AndroidViewModel(application), SensorEventListener {
 
     private val sharedPreferences = application.getSharedPreferences("CameraProfilesPrefs", Context.MODE_PRIVATE)
     private val gson = Gson()
+    private val sensorManager = application.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+    private val lightSensor: Sensor? = sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT)
 
     // --- State ---
     private val _iso = mutableStateOf("100")
@@ -26,9 +32,9 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
     private val _allCombinations = mutableStateOf<List<ExposureCombination>>(emptyList())
     private val _currentEv = mutableStateOf(15)
     private val _bestOverallResult = mutableStateOf<CalculationResult?>(null)
-    // NEW: State for metering mode and touch point
     private val _meteringMode = mutableStateOf(MeteringMode.AVERAGE)
     private val _spotMeteringPoint = mutableStateOf(Pair(0.5f, 0.5f)) // Default to center
+    private val _incidentLightingEv = mutableStateOf(15)
 
     // --- Public Immutable States ---
     val iso: State<String> = _iso
@@ -43,6 +49,7 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
     val bestOverallResult: State<CalculationResult?> = _bestOverallResult
     val meteringMode: State<MeteringMode> = _meteringMode
     val spotMeteringPoint: State<Pair<Float, Float>> = _spotMeteringPoint
+    val incidentLightingEv: State<Int> = _incidentLightingEv
 
     val selectedProfile: CameraProfile?
         get() = _cameraProfiles.value.find { it.id == _selectedProfileId.value }
@@ -60,8 +67,16 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
     fun onShutterSelected(shutter: Int) { _selectedShutter.value = shutter; _selectedAperture.value = null; recalculate() }
     fun clearApertureSelection() { _selectedAperture.value = null; recalculate() }
     fun clearShutterSelection() { _selectedShutter.value = null; recalculate() }
-    fun onMeteringModeChanged(mode: MeteringMode) { _meteringMode.value = mode }
     fun onTapToMeter(point: Pair<Float, Float>) { _spotMeteringPoint.value = point }
+
+    fun onMeteringModeChanged(mode: MeteringMode) {
+        _meteringMode.value = mode
+        if (mode == MeteringMode.INCIDENT) {
+            startIncidentMetering()
+        } else {
+            stopIncidentMetering()
+        }
+    }
 
     fun onProfileSelected(profileId: String) {
         _selectedProfileId.value = profileId
@@ -148,5 +163,43 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
             _allCombinations.value = emptyList()
             _bestOverallResult.value = null
         }
+    }
+
+    // --- Incident Light Metering ---
+    fun startIncidentMetering() {
+        lightSensor?.let {
+            sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+        }
+    }
+
+    fun stopIncidentMetering() {
+        sensorManager.unregisterListener(this)
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
+        // Not used, but required to be implemented
+    }
+
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event?.sensor?.type == Sensor.TYPE_LIGHT) {
+            val lux = event.values[0]
+            _incidentLightingEv.value = convertLuxToEv(lux, iso.value.toDoubleOrNull() ?: 100.0)
+            if (meteringMode.value == MeteringMode.INCIDENT) {
+                onEvChanged(_incidentLightingEv.value)
+            }
+        }
+    }
+
+    private fun convertLuxToEv(lux: Float, iso: Double): Int {
+        if (lux <= 0) return 0
+        // Use the standard incident-light meter calibration constant
+        val c = 250.0
+        val ev = log2((lux * iso) / c)
+        return ev.toInt()
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        stopIncidentMetering()
     }
 }
