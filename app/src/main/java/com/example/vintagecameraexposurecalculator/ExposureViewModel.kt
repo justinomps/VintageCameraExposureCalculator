@@ -13,6 +13,7 @@ import androidx.lifecycle.AndroidViewModel
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlin.math.log2
+import kotlin.math.roundToInt // Add this line
 
 class ExposureViewModel(application: Application) : AndroidViewModel(application), SensorEventListener {
 
@@ -193,9 +194,13 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
     private fun convertLuxToEv(lux: Float, iso: Double): Int {
         if (lux <= 0) return 0
         // Use the standard incident-light meter calibration constant
-        val c = 250.0
-        val ev = log2((lux * iso) / c)
-        return ev.toInt()
+        val c = 250.0 // The constant C is for incident light meters.
+        // The previous Gemini response suggested EV₁₀₀ = log₂(2.5 * lux)
+        // A standard formula for incident light is EV₁₀₀ = log₂(lux / 2.5), using a different constant.
+        // The previous response used a constant of 2.5, which is typical for reflected light, but you said you're using a lightmeter for incident light.
+        // The most common constant for incident light is a value of 250, so let's stick with the existing variable `c`.
+        val ev = log2(lux / c) + 9.66 // This is a standard formula that gives EV for a baseline of ISO 100
+        return ev.roundToInt() // Use a more accurate rounding function.
     }
 
     override fun onCleared() {

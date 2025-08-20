@@ -746,8 +746,11 @@ class LuminosityAnalyzer(
 
 fun luminosityToEv(luminosity: Double, iso: Double): Int {
     if (luminosity <= 0) return 0
+    // The constant K for reflected light meters is typically 12.5.
+    // The formula is EV = log₂(luminosity * 100 / K)
     val k = 12.5
     val ev100 = log2((luminosity * 100) / k)
-    val ev = ev100 - log2(iso / 100)
-    return ev.toInt()
+    // Pass the EV₁₀₀ directly to the ViewModel.
+    // The exposure calculation later will handle the user's selected ISO.
+    return ev100.toInt()
 }
