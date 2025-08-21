@@ -15,6 +15,11 @@ import com.google.gson.reflect.TypeToken
 import kotlin.math.log2
 import kotlin.math.roundToInt
 
+// New enum to represent the UI mode in a type-safe way
+enum class UIMode {
+    MANUAL, LIVE
+}
+
 class ExposureViewModel(application: Application) : AndroidViewModel(application), SensorEventListener {
 
     private val sharedPreferences = application.getSharedPreferences("CameraProfilesPrefs", Context.MODE_PRIVATE)
@@ -37,6 +42,7 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
     private val _spotMeteringPoint = mutableStateOf(Pair(0.5f, 0.5f))
     private val _incidentLightingEv = mutableStateOf(15.0)
     private val _evAdjustment = mutableStateOf(0)
+    private val _uiMode = mutableStateOf(UIMode.MANUAL) // New state for the UI mode
 
     // --- Public Immutable States ---
     val iso: State<String> = _iso
@@ -53,12 +59,12 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
     val spotMeteringPoint: State<Pair<Float, Float>> = _spotMeteringPoint
     val incidentLightingEv: State<Double> = _incidentLightingEv
     val evAdjustment: State<Int> = _evAdjustment
+    val uiMode: State<UIMode> = _uiMode // New public state for the UI mode
 
     val selectedProfile: CameraProfile?
         get() = _cameraProfiles.value.find { it.id == _selectedProfileId.value }
 
     init {
-        // --- CHANGE 1: Load the last saved ISO value on startup ---
         _iso.value = sharedPreferences.getString("USER_ISO", "100") ?: "100"
 
         loadProfiles()
@@ -71,7 +77,6 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
     // --- Event Handlers ---
     fun onIsoChanged(newIso: String) {
         _iso.value = newIso
-        // --- CHANGE 2: Save the new ISO value whenever it's changed ---
         sharedPreferences.edit().putString("USER_ISO", newIso).apply()
         recalculate()
     }
@@ -87,6 +92,12 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
         _currentEv.value = newEv + _evAdjustment.value
         recalculate()
     }
+
+    // New event handler for changing the UI mode
+    fun onUIModeChanged(newMode: UIMode) {
+        _uiMode.value = newMode
+    }
+
     fun onApertureSelected(aperture: Double) { _selectedAperture.value = aperture; _selectedShutter.value = null; recalculate() }
     fun onShutterSelected(shutter: Int) { _selectedShutter.value = shutter; _selectedAperture.value = null; recalculate() }
     fun clearApertureSelection() { _selectedAperture.value = null; recalculate() }

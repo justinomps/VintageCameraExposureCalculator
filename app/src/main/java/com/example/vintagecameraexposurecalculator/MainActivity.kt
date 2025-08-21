@@ -2,12 +2,15 @@ package com.example.vintageexposurecalculator
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.hardware.camera2.CaptureRequest
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -53,9 +56,6 @@ import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.log2
 import kotlin.math.roundToInt
-import androidx.camera.camera2.interop.Camera2CameraControl
-import androidx.camera.camera2.interop.CaptureRequestOptions
-import android.hardware.camera2.CaptureRequest
 
 // --- Data Classes and Constants ---
 data class LightingOption(val label: String, val ev: Int)
@@ -130,6 +130,7 @@ fun ExposureCalculatorScreen(
     val bestOverallResult by exposureViewModel.bestOverallResult
     val meteringMode by exposureViewModel.meteringMode
     val spotMeteringPoint by exposureViewModel.spotMeteringPoint
+    val uiMode by exposureViewModel.uiMode // Read UI mode from ViewModel
 
     val context = LocalContext.current
     var hasCameraPermission by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
@@ -137,8 +138,10 @@ fun ExposureCalculatorScreen(
         contract = ActivityResultContracts.RequestPermission(),
         onResult = { isGranted -> hasCameraPermission = isGranted }
     )
-    val modes = listOf("Manual EV", "Live Meter")
-    var selectedMode by remember { mutableStateOf(modes.first()) }
+
+    // This local state is no longer needed
+    // var selectedMode by remember { mutableStateOf(modes.first()) }
+
     var showSettingsDialog by remember { mutableStateOf(false) }
 
     if (showSettingsDialog) {
@@ -198,22 +201,26 @@ fun ExposureCalculatorScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
         item {
+            // This segmented button now reads and writes to the ViewModel
+            val modes = listOf(
+                "Manual EV" to UIMode.MANUAL,
+                "Live Meter" to UIMode.LIVE
+            )
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                modes.forEachIndexed { index, label ->
+                modes.forEachIndexed { index, (label, mode) ->
                     SegmentedButton(
                         shape = SegmentedButtonDefaults.itemShape(index = index, count = modes.size),
                         onClick = {
-                            if (label == "Live Meter" && !hasCameraPermission) {
+                            if (mode == UIMode.LIVE && !hasCameraPermission) {
                                 permissionLauncher.launch(Manifest.permission.CAMERA)
                             }
-                            selectedMode = label
-                            if (label == "Manual EV") {
-                                // FIXED: Pass the double value directly
+                            exposureViewModel.onUIModeChanged(mode)
+                            if (mode == UIMode.MANUAL) {
                                 exposureViewModel.onLightingChanged(lightingEv)
                                 exposureViewModel.stopIncidentMetering()
                             }
                         },
-                        selected = label == selectedMode,
+                        selected = uiMode == mode,
                         colors = SegmentedButtonDefaults.colors(
                             activeContainerColor = MaterialTheme.colorScheme.primary,
                             activeContentColor = MaterialTheme.colorScheme.onPrimary,
@@ -227,12 +234,11 @@ fun ExposureCalculatorScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
         item {
-            if (selectedMode == "Manual EV") {
+            // This 'if' statement now checks the uiMode from the ViewModel
+            if (uiMode == UIMode.MANUAL) {
                 LightingDropDown(
-                    // FIXED: Pass the rounded Int for the dropdown, but the callback returns an Int
                     selectedValue = lightingEv.roundToInt(),
                     onValueSelected = {
-                        // The dropdown gives an Int, so convert to Double for the ViewModel
                         exposureViewModel.onLightingChanged(it.toDouble())
                     }
                 )
@@ -502,8 +508,6 @@ fun ResultCard(result: CalculationResult?) {
         }
     }
 }
-// In MainActivity.kt, find and replace this composable
-
 @Composable
 fun AllCombinationsCard(combinations: List<ExposureCombination>) {
     Card(
@@ -519,15 +523,12 @@ fun AllCombinationsCard(combinations: List<ExposureCombination>) {
             }
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
 
-            // The main change is in this loop
             combinations.forEach { combo ->
                 Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("f/${combo.aperture}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
 
-                    // Display either bulb time or shutter speed
                     if (combo.isBulb) {
                         val bulbTime = combo.bulbTimeInSeconds ?: 0.0
-                        // Format for readability: 1 decimal for <10s, 0 for >=10s
                         val bulbText = if (bulbTime < 10) "%.1fs".format(Locale.US, bulbTime) else "${bulbTime.roundToInt()}s"
                         Text(
                             text = bulbText,
@@ -535,7 +536,7 @@ fun AllCombinationsCard(combinations: List<ExposureCombination>) {
                             textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.bodyLarge,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary // Highlight bulb times
+                            color = MaterialTheme.colorScheme.primary
                         )
                     } else {
                         Text(
@@ -546,7 +547,6 @@ fun AllCombinationsCard(combinations: List<ExposureCombination>) {
                         )
                     }
 
-                    // Display correction text ("Bulb", "Perfect", or stop difference)
                     val stopText = when {
                         combo.isBulb -> "Bulb"
                         abs(combo.fStopDifference) < 0.1 -> "Perfect"
@@ -785,17 +785,13 @@ fun CameraView(
         try {
             cameraProvider.unbindAll()
 
-            // --- KEY CHANGE IS HERE ---
-            // 1. Capture the 'camera' object returned by bindToLifecycle
             val camera = cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, imageAnalysis)
 
-            // 2. Lock the Auto-Exposure to get raw light readings
             val camera2Control = Camera2CameraControl.from(camera.cameraControl)
             val captureRequestOptions = CaptureRequestOptions.Builder()
                 .setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, true)
                 .build()
             camera2Control.setCaptureRequestOptions(captureRequestOptions)
-            // --- END OF CHANGE ---
 
         } catch (exc: Exception) {
             Log.e("CameraView", "Use case binding failed", exc)
