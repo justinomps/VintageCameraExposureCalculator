@@ -44,12 +44,16 @@ fun calculateBestSetting(
         val idealShutterDenominator = (1 / idealShutterTime).roundToInt()
         suggestedShutter = findClosest(idealShutterDenominator, profile.shutterSpeeds)
     } else if (fixedShutter != null) {
-        if (profile.apertures.isEmpty()) return null
-        val idealAperture = kotlin.math.sqrt(fixedShutter * (2.0.pow(idealEv)))
+        if (profile.apertures.isEmpty() || fixedShutter <= 0) return null // Added check for shutter speed > 0
+        // --- THIS IS THE CORRECTED LINE ---
+        val idealAperture = kotlin.math.sqrt((2.0.pow(idealEv)) / fixedShutter)
         suggestedAperture = findClosest(idealAperture, profile.apertures)
     } else {
         return null
     }
+
+    // Ensure suggestedShutter is not zero to avoid log2 error
+    if (suggestedShutter <= 0) return null
 
     val resultingEv = log2(suggestedAperture.pow(2) * suggestedShutter)
     val fStopDifference = resultingEv - idealEv
