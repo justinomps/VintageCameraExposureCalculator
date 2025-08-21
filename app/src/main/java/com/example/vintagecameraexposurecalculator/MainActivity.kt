@@ -499,6 +499,8 @@ fun ResultCard(result: CalculationResult?) {
         }
     }
 }
+// In MainActivity.kt, find and replace this composable
+
 @Composable
 fun AllCombinationsCard(combinations: List<ExposureCombination>) {
     Card(
@@ -513,17 +515,53 @@ fun AllCombinationsCard(combinations: List<ExposureCombination>) {
                 Text("Correction", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
             }
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+
+            // The main change is in this loop
             combinations.forEach { combo ->
                 Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("f/${combo.aperture}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-                    Text("1/${combo.closestShutter}s", modifier = Modifier.weight(1f), textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyLarge)
-                    val stopDiff = combo.fStopDifference
-                    val stopText = when {
-                        abs(stopDiff) < 0.1 -> "Perfect"
-                        stopDiff > 0 -> "+%.1f".format(Locale.US, abs(stopDiff))
-                        else -> "-%.1f".format(Locale.US, abs(stopDiff))
+
+                    // Display either bulb time or shutter speed
+                    if (combo.isBulb) {
+                        val bulbTime = combo.bulbTimeInSeconds ?: 0.0
+                        // Format for readability: 1 decimal for <10s, 0 for >=10s
+                        val bulbText = if (bulbTime < 10) "%.1fs".format(Locale.US, bulbTime) else "${bulbTime.roundToInt()}s"
+                        Text(
+                            text = bulbText,
+                            modifier = Modifier.weight(1f),
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary // Highlight bulb times
+                        )
+                    } else {
+                        Text(
+                            text = "1/${combo.closestShutter}s",
+                            modifier = Modifier.weight(1f),
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.bodyLarge
+                        )
                     }
-                    Text(text = stopText, modifier = Modifier.weight(1f), textAlign = TextAlign.End, color = if (abs(stopDiff) < 0.1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f), style = MaterialTheme.typography.bodyLarge)
+
+                    // Display correction text ("Bulb", "Perfect", or stop difference)
+                    val stopText = when {
+                        combo.isBulb -> "Bulb"
+                        abs(combo.fStopDifference) < 0.1 -> "Perfect"
+                        combo.fStopDifference > 0 -> "+%.1f".format(Locale.US, abs(combo.fStopDifference))
+                        else -> "-%.1f".format(Locale.US, abs(combo.fStopDifference))
+                    }
+                    val textColor = when {
+                        combo.isBulb || abs(combo.fStopDifference) < 0.1 -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                    }
+
+                    Text(
+                        text = stopText,
+                        modifier = Modifier.weight(1f),
+                        textAlign = TextAlign.End,
+                        color = textColor,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
                 }
             }
         }

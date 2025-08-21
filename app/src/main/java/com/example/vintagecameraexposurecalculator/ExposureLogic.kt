@@ -12,10 +12,15 @@ data class CalculationResult(
     val fStopDifference: Double
 )
 
+/**
+ * UPDATED: Added isBulb and bulbTimeInSeconds to handle long exposures.
+ */
 data class ExposureCombination(
     val aperture: Double,
     val closestShutter: Int,
-    val fStopDifference: Double
+    val fStopDifference: Double,
+    val isBulb: Boolean = false,
+    val bulbTimeInSeconds: Double? = null
 )
 
 fun findClosest(target: Double, options: List<Double>): Double {
@@ -25,6 +30,7 @@ fun findClosest(target: Int, options: List<Int>): Int {
     return options.minByOrNull { abs(target - it) } ?: 0
 }
 
+// Unchanged function
 fun calculateBestSetting(
     lightingEv: Int,
     iso: Double,
@@ -44,15 +50,13 @@ fun calculateBestSetting(
         val idealShutterDenominator = (1 / idealShutterTime).roundToInt()
         suggestedShutter = findClosest(idealShutterDenominator, profile.shutterSpeeds)
     } else if (fixedShutter != null) {
-        if (profile.apertures.isEmpty() || fixedShutter <= 0) return null // Added check for shutter speed > 0
-        // --- THIS IS THE CORRECTED LINE ---
+        if (profile.apertures.isEmpty() || fixedShutter <= 0) return null
         val idealAperture = kotlin.math.sqrt((2.0.pow(idealEv)) / fixedShutter)
         suggestedAperture = findClosest(idealAperture, profile.apertures)
     } else {
         return null
     }
 
-    // Ensure suggestedShutter is not zero to avoid log2 error
     if (suggestedShutter <= 0) return null
 
     val resultingEv = log2(suggestedAperture.pow(2) * suggestedShutter)
@@ -66,46 +70,67 @@ fun calculateBestSetting(
     )
 }
 
+/**
+ * UPDATED: This function now identifies when a calculated exposure time
+ * is longer than the camera's slowest shutter speed and flags it as a "Bulb" exposure.
+ */
 fun calculateAllCombinations(
     lightingEv: Int,
     iso: Double,
     profile: CameraProfile
 ): List<ExposureCombination> {
-    if (iso <= 0 || profile.apertures.isEmpty() || profile.shutterSpeeds.isEmpty()) {
+    if (iso <= 0 || profile.apertures.isEmpty()) {
         return emptyList()
     }
     val idealEv = lightingEv
+    // The smallest denominator is the slowest shutter speed (e.g., 1 for 1s)
+    val slowestShutterSpeedDenominator = profile.shutterSpeeds.minOrNull()
+
     return profile.apertures.map { aperture ->
+        // This is the ideal exposure time in seconds (e.g., 0.5s, 4.0s)
         val idealShutterTime = aperture.pow(2) / (2.0.pow(idealEv))
-        val idealShutterDenominator = (1 / idealShutterTime).roundToInt()
-        val closestShutter = findClosest(idealShutterDenominator, profile.shutterSpeeds)
-        val resultingEv = log2(aperture.pow(2) * closestShutter)
-        val fStopDifference = resultingEv - idealEv
-        ExposureCombination(
-            aperture = aperture,
-            closestShutter = closestShutter,
-            fStopDifference = fStopDifference
-        )
+
+        // Determine if this should be a bulb exposure
+        val isBulbExposure = slowestShutterSpeedDenominator == null || idealShutterTime > (1.0 / slowestShutterSpeedDenominator)
+
+        if (isBulbExposure) {
+            // It's a Bulb exposure.
+            ExposureCombination(
+                aperture = aperture,
+                closestShutter = 0, // Not applicable
+                fStopDifference = 0.0, // It's the "perfect" time
+                isBulb = true,
+                bulbTimeInSeconds = idealShutterTime
+            )
+        } else {
+            // It's a standard shutter speed exposure.
+            val idealShutterDenominator = (1 / idealShutterTime).roundToInt()
+            val closestShutter = findClosest(idealShutterDenominator, profile.shutterSpeeds)
+            val resultingEv = log2(aperture.pow(2) * closestShutter)
+            val fStopDifference = resultingEv - idealEv
+            ExposureCombination(
+                aperture = aperture,
+                closestShutter = closestShutter,
+                fStopDifference = fStopDifference,
+                isBulb = false,
+                bulbTimeInSeconds = null
+            )
+        }
     }
 }
 
-/**
- * NEW: Calculates the single best overall exposure setting from a profile.
- * It finds the combination with the smallest f-stop difference.
- */
+// Unchanged function
 fun calculateBestOverallSetting(
     lightingEv: Int,
     iso: Double,
     profile: CameraProfile
 ): CalculationResult? {
-    // First, get all possible combinations
     val allCombinations = calculateAllCombinations(lightingEv, iso, profile)
     if (allCombinations.isEmpty()) return null
 
-    // Find the combination with the minimum absolute f-stop difference
-    val bestCombination = allCombinations.minByOrNull { abs(it.fStopDifference) } ?: return null
+    // Find the non-bulb combination with the minimum f-stop difference
+    val bestCombination = allCombinations.filter { !it.isBulb }.minByOrNull { abs(it.fStopDifference) } ?: return null
 
-    // Convert the best combination into a CalculationResult
     val resultingEv = log2(bestCombination.aperture.pow(2) * bestCombination.closestShutter)
 
     return CalculationResult(
