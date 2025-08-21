@@ -53,6 +53,9 @@ import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.log2
 import kotlin.math.roundToInt
+import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.CaptureRequestOptions
+import android.hardware.camera2.CaptureRequest
 
 // --- Data Classes and Constants ---
 data class LightingOption(val label: String, val ev: Int)
@@ -781,7 +784,19 @@ fun CameraView(
         val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
         try {
             cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, imageAnalysis)
+
+            // --- KEY CHANGE IS HERE ---
+            // 1. Capture the 'camera' object returned by bindToLifecycle
+            val camera = cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, imageAnalysis)
+
+            // 2. Lock the Auto-Exposure to get raw light readings
+            val camera2Control = Camera2CameraControl.from(camera.cameraControl)
+            val captureRequestOptions = CaptureRequestOptions.Builder()
+                .setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, true)
+                .build()
+            camera2Control.setCaptureRequestOptions(captureRequestOptions)
+            // --- END OF CHANGE ---
+
         } catch (exc: Exception) {
             Log.e("CameraView", "Use case binding failed", exc)
         }
