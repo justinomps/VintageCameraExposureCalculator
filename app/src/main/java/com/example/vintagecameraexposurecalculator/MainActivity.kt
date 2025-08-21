@@ -14,7 +14,6 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -25,10 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -36,7 +32,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -57,6 +52,7 @@ import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.log2
+import kotlin.math.roundToInt
 
 // --- Data Classes and Constants ---
 data class LightingOption(val label: String, val ev: Int)
@@ -140,6 +136,20 @@ fun ExposureCalculatorScreen(
     )
     val modes = listOf("Manual EV", "Live Meter")
     var selectedMode by remember { mutableStateOf(modes.first()) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
+
+    if (showSettingsDialog) {
+        SettingsDialog(
+            currentAdjustment = exposureViewModel.evAdjustment.value,
+            onDismiss = { showSettingsDialog = false },
+            onSave = { newAdjustment ->
+                exposureViewModel.onEvAdjustmentChanged(newAdjustment)
+                showSettingsDialog = false
+            }
+        )
+    }
+
+    val formattedLiveEv = "%.1f".format(Locale.US, currentEv)
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -147,7 +157,16 @@ fun ExposureCalculatorScreen(
         contentPadding = PaddingValues(bottom = 16.dp)
     ) {
         item {
-            Text("VINTAGE EXPOSURE", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("VINTAGE EXPOSURE", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
+                IconButton(onClick = { showSettingsDialog = true }) {
+                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.primary)
+                }
+            }
             Spacer(modifier = Modifier.height(16.dp))
         }
         item {
@@ -186,8 +205,9 @@ fun ExposureCalculatorScreen(
                             }
                             selectedMode = label
                             if (label == "Manual EV") {
+                                // FIXED: Pass the double value directly
                                 exposureViewModel.onLightingChanged(lightingEv)
-                                exposureViewModel.stopIncidentMetering() // Stop sensor when switching away
+                                exposureViewModel.stopIncidentMetering()
                             }
                         },
                         selected = label == selectedMode,
@@ -206,8 +226,12 @@ fun ExposureCalculatorScreen(
         item {
             if (selectedMode == "Manual EV") {
                 LightingDropDown(
-                    selectedValue = lightingEv,
-                    onValueSelected = { exposureViewModel.onLightingChanged(it) }
+                    // FIXED: Pass the rounded Int for the dropdown, but the callback returns an Int
+                    selectedValue = lightingEv.roundToInt(),
+                    onValueSelected = {
+                        // The dropdown gives an Int, so convert to Double for the ViewModel
+                        exposureViewModel.onLightingChanged(it.toDouble())
+                    }
                 )
             } else {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -232,7 +256,7 @@ fun ExposureCalculatorScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(200.dp)
-                            .clipToBounds(), // <-- CORRECTED LINE
+                            .clipToBounds(),
                         contentAlignment = Alignment.Center
                     ) {
                         if (meteringMode == MeteringMode.AVERAGE || meteringMode == MeteringMode.SPOT) {
@@ -250,7 +274,7 @@ fun ExposureCalculatorScreen(
                                     Box(
                                         modifier = Modifier
                                             .offset(
-                                                x = (spotMeteringPoint.first * 200 - 100).dp, // Approximation for UI
+                                                x = (spotMeteringPoint.first * 200 - 100).dp,
                                                 y = (spotMeteringPoint.second * 200 - 100).dp
                                             )
                                             .size(40.dp)
@@ -263,7 +287,7 @@ fun ExposureCalculatorScreen(
                                         .padding(horizontal = 12.dp, vertical = 8.dp)
                                 ) {
                                     Text(
-                                        text = "LIVE EV: $currentEv",
+                                        text = "LIVE EV: $formattedLiveEv",
                                         color = MaterialTheme.colorScheme.onBackground,
                                         style = MaterialTheme.typography.labelMedium
                                     )
@@ -285,7 +309,7 @@ fun ExposureCalculatorScreen(
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "EV ${exposureViewModel.incidentLightingEv.value}",
+                                    text = "EV $formattedLiveEv",
                                     style = MaterialTheme.typography.displayLarge,
                                     color = MaterialTheme.colorScheme.primary
                                 )
@@ -317,7 +341,9 @@ fun ExposureCalculatorScreen(
     }
 }
 
-// --- Manage Profiles Screen ---
+// --- Manage Profiles Screen, Profile Edit Screen, etc. ---
+// (No changes in the composables below)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ManageProfilesScreen(
@@ -381,7 +407,6 @@ fun ManageProfilesScreen(
     }
 }
 
-// --- Profile Edit Screen ---
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileEditScreen(
@@ -441,7 +466,6 @@ fun ProfileEditScreen(
 }
 
 
-// --- Reusable Composables ---
 @Composable
 fun ResultCard(result: CalculationResult?) {
     Card(
@@ -646,11 +670,51 @@ fun ArtDecoOutlinedTextField(
     )
 }
 
+@Composable
+fun SettingsDialog(
+    currentAdjustment: Int,
+    onDismiss: () -> Unit,
+    onSave: (Int) -> Unit
+) {
+    var sliderValue by remember { mutableStateOf(currentAdjustment.toFloat()) }
+    val roundedValue = sliderValue.roundToInt()
 
-// --- CameraView Composable ---
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Live Meter Adjustment") },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("Adjust the calculated EV value by ${roundedValue} stops.")
+                Slider(
+                    value = sliderValue,
+                    onValueChange = { sliderValue = it },
+                    valueRange = -6f..6f,
+                    steps = 11
+                )
+                Text(
+                    text = if (roundedValue > 0) "+$roundedValue EV" else "$roundedValue EV",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(roundedValue) }) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
 @Composable
 fun CameraView(
-    onEvCalculated: (Int) -> Unit,
+    onEvCalculated: (Double) -> Unit,
     iso: Double,
     meteringMode: MeteringMode,
     spotMeteringPoint: Pair<Float, Float>,
@@ -698,7 +762,6 @@ fun CameraView(
     )
 }
 
-// --- LuminosityAnalyzer Class ---
 class LuminosityAnalyzer(
     private val meteringMode: MeteringMode,
     private val spotMeteringPoint: Pair<Float, Float>,
@@ -726,8 +789,8 @@ class LuminosityAnalyzer(
                 val spotY = (spotMeteringPoint.second * image.height) - (spotHeight / 2)
                 var totalLuma = 0.0
                 var pixelCount = 0
-                for (y in spotY.toInt().. (spotY + spotHeight).toInt()) {
-                    for (x in spotX.toInt().. (spotX + spotWidth).toInt()) {
+                for (y in spotY.toInt()..(spotY + spotHeight).toInt()) {
+                    for (x in spotX.toInt()..(spotX + spotWidth).toInt()) {
                         if (x >= 0 && x < image.width && y >= 0 && y < image.height) {
                             totalLuma += pixels[y * image.width + x]
                             pixelCount++
@@ -736,7 +799,6 @@ class LuminosityAnalyzer(
                 }
                 if (pixelCount > 0) totalLuma / pixelCount else 0.0
             }
-            // Incident is handled by the sensor, not here
             MeteringMode.INCIDENT -> 0.0
         }
         onLuminosityCalculated(luma)
@@ -744,13 +806,9 @@ class LuminosityAnalyzer(
     }
 }
 
-fun luminosityToEv(luminosity: Double, iso: Double): Int {
-    if (luminosity <= 0) return 0
-    // The constant K for reflected light meters is typically 12.5.
-    // The formula is EV = log₂(luminosity * 100 / K)
+fun luminosityToEv(luminosity: Double, iso: Double): Double {
+    if (luminosity <= 0) return 0.0
     val k = 12.5
     val ev100 = log2((luminosity * 100) / k)
-    // Pass the EV₁₀₀ directly to the ViewModel.
-    // The exposure calculation later will handle the user's selected ISO.
-    return ev100.toInt()
+    return ev100
 }
