@@ -24,55 +24,61 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
 
     // --- State ---
     private val _iso = mutableStateOf("100")
-    private val _manualLightingEv = mutableStateOf(15.0) // Using Double
+    private val _manualLightingEv = mutableStateOf(15.0)
     private val _cameraProfiles = mutableStateOf<List<CameraProfile>>(emptyList())
     private val _selectedProfileId = mutableStateOf<String?>(null)
     private val _selectedAperture = mutableStateOf<Double?>(null)
     private val _selectedShutter = mutableStateOf<Int?>(null)
     private val _result = mutableStateOf<CalculationResult?>(null)
     private val _allCombinations = mutableStateOf<List<ExposureCombination>>(emptyList())
-    private val _currentEv = mutableStateOf(15.0) // Using Double
+    private val _currentEv = mutableStateOf(15.0)
     private val _bestOverallResult = mutableStateOf<CalculationResult?>(null)
     private val _meteringMode = mutableStateOf(MeteringMode.AVERAGE)
     private val _spotMeteringPoint = mutableStateOf(Pair(0.5f, 0.5f))
-    private val _incidentLightingEv = mutableStateOf(15.0) // Using Double
+    private val _incidentLightingEv = mutableStateOf(15.0)
     private val _evAdjustment = mutableStateOf(0)
 
     // --- Public Immutable States ---
     val iso: State<String> = _iso
-    val lightingEv: State<Double> = _manualLightingEv // Using Double
+    val lightingEv: State<Double> = _manualLightingEv
     val cameraProfiles: State<List<CameraProfile>> = _cameraProfiles
     val selectedProfileId: State<String?> = _selectedProfileId
     val selectedAperture: State<Double?> = _selectedAperture
     val selectedShutter: State<Int?> = _selectedShutter
     val result: State<CalculationResult?> = _result
     val allCombinations: State<List<ExposureCombination>> = _allCombinations
-    val currentEv: State<Double> = _currentEv // Using Double
+    val currentEv: State<Double> = _currentEv
     val bestOverallResult: State<CalculationResult?> = _bestOverallResult
     val meteringMode: State<MeteringMode> = _meteringMode
     val spotMeteringPoint: State<Pair<Float, Float>> = _spotMeteringPoint
-    val incidentLightingEv: State<Double> = _incidentLightingEv // Using Double
+    val incidentLightingEv: State<Double> = _incidentLightingEv
     val evAdjustment: State<Int> = _evAdjustment
 
     val selectedProfile: CameraProfile?
         get() = _cameraProfiles.value.find { it.id == _selectedProfileId.value }
 
     init {
+        // --- CHANGE 1: Load the last saved ISO value on startup ---
+        _iso.value = sharedPreferences.getString("USER_ISO", "100") ?: "100"
+
         loadProfiles()
         loadEvAdjustment()
-        // Set initial EV value correctly
         _currentEv.value = sharedPreferences.getFloat("MANUAL_EV", 15.0f).toDouble()
         _manualLightingEv.value = _currentEv.value
         recalculate()
     }
 
     // --- Event Handlers ---
-    fun onIsoChanged(newIso: String) { _iso.value = newIso; recalculate() }
+    fun onIsoChanged(newIso: String) {
+        _iso.value = newIso
+        // --- CHANGE 2: Save the new ISO value whenever it's changed ---
+        sharedPreferences.edit().putString("USER_ISO", newIso).apply()
+        recalculate()
+    }
 
-    // CORRECTED: This function now accepts a Double
     fun onLightingChanged(newEv: Double) {
         _manualLightingEv.value = newEv
-        _currentEv.value = newEv // For manual EV, no adjustment is applied
+        _currentEv.value = newEv
         sharedPreferences.edit().putFloat("MANUAL_EV", newEv.toFloat()).apply()
         recalculate()
     }
@@ -105,7 +111,7 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
         recalculate()
     }
 
-    // --- Profile Management --- (No Changes Here)
+    // --- Profile Management ---
     fun addCameraProfile(name: String, aperturesStr: String, shuttersStr: String) {
         try {
             val apertures = aperturesStr.split(',').mapNotNull { it.trim().toDoubleOrNull() }.sorted()
@@ -177,7 +183,7 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
     private fun recalculate() {
         val isoNum = _iso.value.toDoubleOrNull()
         val profile = selectedProfile
-        val evForCalc = _currentEv.value.roundToInt() // Round only when needed for calculation logic
+        val evForCalc = _currentEv.value.roundToInt()
 
         if (isoNum != null && profile != null && (_selectedAperture.value != null || _selectedShutter.value != null)) {
             _result.value = calculateBestSetting(evForCalc, isoNum, profile, _selectedAperture.value, _selectedShutter.value)
