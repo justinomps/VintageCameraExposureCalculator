@@ -34,7 +34,7 @@ fun calculateBestSetting(
 ): CalculationResult? {
     if (iso <= 0) return null
 
-    val idealEv = lightingEv + log2(iso / 100.0)
+    val idealEv = lightingEv
     var suggestedAperture: Double = fixedAperture ?: 0.0
     var suggestedShutter: Int = fixedShutter ?: 0
 
@@ -70,7 +70,7 @@ fun calculateAllCombinations(
     if (iso <= 0 || profile.apertures.isEmpty() || profile.shutterSpeeds.isEmpty()) {
         return emptyList()
     }
-    val idealEv = lightingEv + log2(iso / 100.0)
+    val idealEv = lightingEv
     return profile.apertures.map { aperture ->
         val idealShutterTime = aperture.pow(2) / (2.0.pow(idealEv))
         val idealShutterDenominator = (1 / idealShutterTime).roundToInt()
