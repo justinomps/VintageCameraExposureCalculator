@@ -56,6 +56,7 @@ import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.log2
 import kotlin.math.roundToInt
+import kotlin.math.pow
 
 // --- Data Classes and Constants ---
 data class LightingOption(val label: String, val ev: Int)
@@ -174,7 +175,7 @@ fun ExposureCalculatorScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("DECOLUX", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+                Text("DECOLUX EXPOSURE", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
                 IconButton(onClick = { showHelpDialog = true }) {
                     Icon(Icons.Filled.Help, contentDescription = "Help", tint = MaterialTheme.colorScheme.primary)
                 }
@@ -385,7 +386,8 @@ fun HelpDialog(onDismiss: () -> Unit) {
             ) {
                 HelpSection(
                     title = "1. Basic Setup",
-                    content = "• Select Camera Profile: Choose the camera that matches your lens and shutter speeds.\n" +
+                    content = "• Click the Edit icon to create a new Camera Profile. Enter the name, apertures, and shutter speeds - separated by commas.\n" +
+                            "• Select Camera Profile: Choose the camera that matches your lens and shutter speeds.\n" +
                             "• Enter Film ISO: Input the ISO of your film. This value is saved for next time. (Note: historical glass plates typically have an ISO between 1-5)."
                 )
                 HelpSection(
@@ -536,7 +538,7 @@ fun ProfileEditScreen(
         ) {
             ArtDecoOutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("CAMERA NAME") }, modifier = Modifier.fillMaxWidth())
             ArtDecoOutlinedTextField(value = apertures, onValueChange = { apertures = it }, label = { Text("APERTURES (COMMA-SEPARATED)") }, modifier = Modifier.fillMaxWidth())
-            ArtDecoOutlinedTextField(value = shutterSpeeds, onValueChange = { shutterSpeeds = it }, label = { Text("SHUTTER SPEEDS (COMMA-SEPARATED)") }, modifier = Modifier.fillMaxWidth())
+            ArtDecoOutlinedTextField(value = shutterSpeeds, onValueChange = { shutterSpeeds = it }, label = { Text("SHUTTER SPEEDS (DENOMINATORS ONLY - COMMA-SEPARATED)") }, modifier = Modifier.fillMaxWidth())
             Spacer(modifier = Modifier.weight(1f))
             Button(
                 onClick = {
@@ -867,9 +869,13 @@ fun CameraView(
                 ) {
                     val sensorIso = result.get(android.hardware.camera2.CaptureResult.SENSOR_SENSITIVITY)
                     val exposureTimeNs = result.get(android.hardware.camera2.CaptureResult.SENSOR_EXPOSURE_TIME)
+                    // ADD THIS LINE to get the aperture the phone's camera is using.
+                    val lensAperture = result.get(android.hardware.camera2.CaptureResult.LENS_APERTURE)
 
-                    if (sensorIso != null && exposureTimeNs != null) {
-                        val calculatedEv = calculateEvFromCaptureResult(sensorIso, exposureTimeNs)
+
+                    if (sensorIso != null && exposureTimeNs != null && lensAperture != null) {
+                        // Pass all three values to the calculation function.
+                        val calculatedEv = calculateEvFromCaptureResult(sensorIso, exposureTimeNs, lensAperture)
                         onEvCalculated(calculatedEv)
                     }
                 }
@@ -909,10 +915,12 @@ fun CameraView(
     )
 }
 
-fun calculateEvFromCaptureResult(sensorIso: Int, exposureTimeNs: Long): Double {
+fun calculateEvFromCaptureResult(sensorIso: Int, exposureTimeNs: Long, lensAperture: Float): Double {
     if (exposureTimeNs <= 0 || sensorIso <= 0) return 0.0
     val exposureTimeSec = exposureTimeNs / 1_000_000_000.0
 
-    val ev100 = log2(100.0 / (exposureTimeSec * sensorIso))
-    return ev100
+    // CORE FIX: Convert the 'lensAperture' Float to a Double before calling .pow()
+    val ev = log2((lensAperture.toDouble().pow(2) / exposureTimeSec) * (100.0 / sensorIso))
+
+    return if (ev.isFinite()) ev else 0.0
 }

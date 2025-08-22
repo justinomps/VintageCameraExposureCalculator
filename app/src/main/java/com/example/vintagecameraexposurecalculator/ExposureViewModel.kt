@@ -114,7 +114,7 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
             } else {
                 // CORE FIX: Explicitly set the EV to 0 to clear any stale values
                 _currentEv.value = 0.0
-                recalculate()
+                recalculate() // Recalculate to update the UI
             }
         } else {
             stopIncidentMetering()
@@ -203,17 +203,27 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
         val profile = selectedProfile
         val evForCalc = _currentEv.value.roundToInt()
 
-        if (isoNum != null && profile != null && (_selectedAperture.value != null || _selectedShutter.value != null)) {
-            _result.value = calculateBestSetting(evForCalc, isoNum, profile, _selectedAperture.value, _selectedShutter.value)
-        } else {
+        // First, check if we have the basic requirements. If not, clear all results and stop.
+        if (isoNum == null || profile == null) {
             _result.value = null
-        }
-        if (isoNum != null && profile != null) {
-            _allCombinations.value = calculateAllCombinations(evForCalc, isoNum, profile)
-            _bestOverallResult.value = calculateBestOverallSetting(evForCalc, isoNum, profile)
-        } else {
             _allCombinations.value = emptyList()
             _bestOverallResult.value = null
+            return
+        }
+
+        // If we have the basics, always calculate the list of all possible combinations
+        // and determine the best overall setting among them.
+        _allCombinations.value = calculateAllCombinations(evForCalc, isoNum, profile)
+        _bestOverallResult.value = calculateBestOverallSetting(evForCalc, isoNum, profile)
+
+        // Then, separately, calculate a specific result ONLY if the user has locked
+        // either an aperture or a shutter speed.
+        if (_selectedAperture.value != null || _selectedShutter.value != null) {
+            _result.value = calculateBestSetting(evForCalc, isoNum, profile, _selectedAperture.value, _selectedShutter.value)
+        } else {
+            // If nothing is locked, the specific result should be null. The UI will
+            // correctly fall back to using the 'bestOverallResult' we calculated above.
+            _result.value = null
         }
     }
 
@@ -230,6 +240,12 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) { /* Not used */ }
 
     override fun onSensorChanged(event: SensorEvent?) {
+        // CORE FIX: Add a guard to prevent processing stale sensor events
+        // on devices where the light sensor is not actually available.
+        if (!_isLightSensorAvailable.value) {
+            return
+        }
+
         if (event?.sensor?.type == Sensor.TYPE_LIGHT) {
             val lux = event.values[0]
             val calculatedEv = convertLuxToEv(lux, iso.value.toDoubleOrNull() ?: 100.0)
