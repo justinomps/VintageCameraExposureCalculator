@@ -23,11 +23,13 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.* // This now includes Help
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -43,6 +45,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -130,7 +133,7 @@ fun ExposureCalculatorScreen(
     val bestOverallResult by exposureViewModel.bestOverallResult
     val meteringMode by exposureViewModel.meteringMode
     val spotMeteringPoint by exposureViewModel.spotMeteringPoint
-    val uiMode by exposureViewModel.uiMode // Read UI mode from ViewModel
+    val uiMode by exposureViewModel.uiMode
 
     val context = LocalContext.current
     var hasCameraPermission by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
@@ -139,10 +142,8 @@ fun ExposureCalculatorScreen(
         onResult = { isGranted -> hasCameraPermission = isGranted }
     )
 
-    // This local state is no longer needed
-    // var selectedMode by remember { mutableStateOf(modes.first()) }
-
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var showHelpDialog by remember { mutableStateOf(false) }
 
     if (showSettingsDialog) {
         SettingsDialog(
@@ -155,6 +156,10 @@ fun ExposureCalculatorScreen(
         )
     }
 
+    if (showHelpDialog) {
+        HelpDialog(onDismiss = { showHelpDialog = false })
+    }
+
     val formattedLiveEv = "%.1f".format(Locale.US, currentEv)
 
     LazyColumn(
@@ -165,10 +170,12 @@ fun ExposureCalculatorScreen(
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("VINTAGE EXPOSURE", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
+                Text("DECOLUX EXPOSURE", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+                IconButton(onClick = { showHelpDialog = true }) {
+                    Icon(Icons.Filled.Help, contentDescription = "Help", tint = MaterialTheme.colorScheme.primary)
+                }
                 IconButton(onClick = { showSettingsDialog = true }) {
                     Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.primary)
                 }
@@ -201,7 +208,6 @@ fun ExposureCalculatorScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
         item {
-            // This segmented button now reads and writes to the ViewModel
             val modes = listOf(
                 "Manual EV" to UIMode.MANUAL,
                 "Live Meter" to UIMode.LIVE
@@ -234,7 +240,6 @@ fun ExposureCalculatorScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
         item {
-            // This 'if' statement now checks the uiMode from the ViewModel
             if (uiMode == UIMode.MANUAL) {
                 LightingDropDown(
                     selectedValue = lightingEv.roundToInt(),
@@ -350,8 +355,72 @@ fun ExposureCalculatorScreen(
     }
 }
 
-// --- Manage Profiles Screen, Profile Edit Screen, etc. ---
-// (No changes in the composables below)
+// --- NEW COMPOSABLE FOR HELP DIALOG ---
+@Composable
+fun HelpDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("How to Use DecoLux") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                HelpSection(
+                    title = "1. Basic Setup",
+                    content = "• Select Camera Profile: Choose the camera that matches your lens and shutter speeds.\n" +
+                            "• Enter Film ISO: Input the ISO of your film. This value is saved for next time. (Note: historical glass plates typically have an ISO between 1-5)."
+                )
+                HelpSection(
+                    title = "2. Choose a Metering Method",
+                    content = "• Manual EV: Select a lighting condition from the dropdown.\n" +
+                            "• Live Meter: Uses your phone's camera to measure light in real-time.\n" +
+                            "  - Average: Measures the whole scene.\n" +
+                            "  - Spot: Tap the preview to measure a specific point.\n" +
+                            "  - Incident: Point the phone's screen toward the light source."
+                )
+                HelpSection(
+                    title = "3. Find Your Perfect Exposure",
+                    content = "• Best Exposure: Shows the most balanced setting.\n" +
+                            "• Exposure Options: Shows all usable combinations, including 'Bulb' for long exposures.\n" +
+                            "• Lock a Setting: Select an Aperture or Shutter to see the corresponding value."
+                )
+                HelpSection(
+                    title = "4. How to Calibrate the Live Meter",
+                    content = "For best results, calibrate the meter against a trusted external light meter.\n" +
+                            "1. Meter an evenly lit surface (like a gray card) with your external meter and note the EV.\n" +
+                            "2. In DecoLux, use the Live Meter to read the same surface.\n" +
+                            "3. Tap the Settings icon (⚙️).\n" +
+                            "4. Use the slider to adjust the app's EV to match your external meter's reading.\n" +
+                            "5. Tap 'Save'. Your calibration is now stored."
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
+}
+
+@Composable
+fun HelpSection(title: String, content: String) {
+    Column {
+        Text(text = title, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+        Spacer(modifier = Modifier.height(4.dp))
+        // This Text composable has been updated with an explicit color
+        Text(
+            text = content,
+            style = MaterialTheme.typography.bodyLarge,
+            lineHeight = 20.sp,
+            color = MaterialTheme.colorScheme.onSurface // Explicitly set to ArtDecoBlack
+        )
+    }
+}
+
+// --- Other Composables (ManageProfilesScreen, ProfileEditScreen, etc.) ---
+// (No changes below this line)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
