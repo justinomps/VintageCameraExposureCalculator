@@ -15,7 +15,6 @@ import com.google.gson.reflect.TypeToken
 import kotlin.math.log2
 import kotlin.math.roundToInt
 
-// New enum to represent the UI mode in a type-safe way
 enum class UIMode {
     MANUAL, LIVE
 }
@@ -42,7 +41,8 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
     private val _spotMeteringPoint = mutableStateOf(Pair(0.5f, 0.5f))
     private val _incidentLightingEv = mutableStateOf(15.0)
     private val _evAdjustment = mutableStateOf(0)
-    private val _uiMode = mutableStateOf(UIMode.MANUAL) // New state for the UI mode
+    private val _uiMode = mutableStateOf(UIMode.MANUAL)
+    private val _isLightSensorAvailable = mutableStateOf(false)
 
     // --- Public Immutable States ---
     val iso: State<String> = _iso
@@ -59,13 +59,15 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
     val spotMeteringPoint: State<Pair<Float, Float>> = _spotMeteringPoint
     val incidentLightingEv: State<Double> = _incidentLightingEv
     val evAdjustment: State<Int> = _evAdjustment
-    val uiMode: State<UIMode> = _uiMode // New public state for the UI mode
+    val uiMode: State<UIMode> = _uiMode
+    val isLightSensorAvailable: State<Boolean> = _isLightSensorAvailable
 
     val selectedProfile: CameraProfile?
         get() = _cameraProfiles.value.find { it.id == _selectedProfileId.value }
 
     init {
         _iso.value = sharedPreferences.getString("USER_ISO", "100") ?: "100"
+        _isLightSensorAvailable.value = lightSensor != null
 
         loadProfiles()
         loadEvAdjustment()
@@ -93,7 +95,6 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
         recalculate()
     }
 
-    // New event handler for changing the UI mode
     fun onUIModeChanged(newMode: UIMode) {
         _uiMode.value = newMode
     }
@@ -108,7 +109,13 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
     fun onMeteringModeChanged(mode: MeteringMode) {
         _meteringMode.value = mode
         if (mode == MeteringMode.INCIDENT) {
-            startIncidentMetering()
+            if (_isLightSensorAvailable.value) {
+                startIncidentMetering()
+            } else {
+                // CORE FIX: Explicitly set the EV to 0 to clear any stale values
+                _currentEv.value = 0.0
+                recalculate()
+            }
         } else {
             stopIncidentMetering()
         }
@@ -122,7 +129,8 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
         recalculate()
     }
 
-    // --- Profile Management ---
+    // (The rest of the file remains unchanged)
+
     fun addCameraProfile(name: String, aperturesStr: String, shuttersStr: String) {
         try {
             val apertures = aperturesStr.split(',').mapNotNull { it.trim().toDoubleOrNull() }.sorted()
@@ -158,7 +166,6 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
         saveProfiles()
     }
 
-    // --- Persistence & Calculation ---
     private fun saveProfiles() {
         val json = gson.toJson(_cameraProfiles.value)
         sharedPreferences.edit().putString("CAMERA_PROFILES_LIST", json).apply()
@@ -210,7 +217,6 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // --- Incident Light Metering ---
     fun startIncidentMetering() {
         lightSensor?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
