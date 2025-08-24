@@ -40,9 +40,13 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
     private val _meteringMode = mutableStateOf(MeteringMode.AVERAGE)
     private val _spotMeteringPoint = mutableStateOf(Pair(0.5f, 0.5f))
     private val _incidentLightingEv = mutableStateOf(15.0)
-    private val _evAdjustment = mutableStateOf(0)
+    // MODIFIED: Create separate adjustments for camera and incident sensor
+    private val _cameraEvAdjustment = mutableStateOf(0)
+    private val _incidentEvAdjustment = mutableStateOf(0)
     private val _uiMode = mutableStateOf(UIMode.MANUAL)
     private val _isLightSensorAvailable = mutableStateOf(false)
+    private val _areInputsValid = mutableStateOf(false)
+
 
     // --- Public Immutable States ---
     val iso: State<String> = _iso
@@ -58,9 +62,12 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
     val meteringMode: State<MeteringMode> = _meteringMode
     val spotMeteringPoint: State<Pair<Float, Float>> = _spotMeteringPoint
     val incidentLightingEv: State<Double> = _incidentLightingEv
-    val evAdjustment: State<Int> = _evAdjustment
+    // MODIFIED: Expose both adjustment values
+    val cameraEvAdjustment: State<Int> = _cameraEvAdjustment
+    val incidentEvAdjustment: State<Int> = _incidentEvAdjustment
     val uiMode: State<UIMode> = _uiMode
     val isLightSensorAvailable: State<Boolean> = _isLightSensorAvailable
+    val areInputsValid: State<Boolean> = _areInputsValid
 
     val selectedProfile: CameraProfile?
         get() = _cameraProfiles.value.find { it.id == _selectedProfileId.value }
@@ -70,7 +77,8 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
         _isLightSensorAvailable.value = lightSensor != null
 
         loadProfiles()
-        loadEvAdjustment()
+        // MODIFIED: Load both adjustments
+        loadEvAdjustments()
         _currentEv.value = sharedPreferences.getFloat("MANUAL_EV", 15.0f).toDouble()
         _manualLightingEv.value = _currentEv.value
         recalculate()
@@ -90,8 +98,13 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
         recalculate()
     }
 
+    // MODIFIED: Apply the correct adjustment based on the current metering mode.
     fun onEvChanged(newEv: Double) {
-        _currentEv.value = newEv + _evAdjustment.value
+        val adjustment = when (_meteringMode.value) {
+            MeteringMode.INCIDENT -> _incidentEvAdjustment.value
+            else -> _cameraEvAdjustment.value
+        }
+        _currentEv.value = newEv + adjustment
         recalculate()
     }
 
@@ -104,7 +117,15 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
     fun clearApertureSelection() { _selectedAperture.value = null; recalculate() }
     fun clearShutterSelection() { _selectedShutter.value = null; recalculate() }
     fun onTapToMeter(point: Pair<Float, Float>) { _spotMeteringPoint.value = point }
-    fun onEvAdjustmentChanged(adjustment: Int) { _evAdjustment.value = adjustment; saveEvAdjustment() }
+
+    // MODIFIED: Update and save both adjustment values.
+    fun onEvAdjustmentsChanged(cameraAdjustment: Int, incidentAdjustment: Int) {
+        _cameraEvAdjustment.value = cameraAdjustment
+        _incidentEvAdjustment.value = incidentAdjustment
+        saveEvAdjustments()
+        recalculate() // Recalculate with the new adjustment
+    }
+
 
     fun onMeteringModeChanged(mode: MeteringMode) {
         _meteringMode.value = mode
@@ -112,9 +133,8 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
             if (_isLightSensorAvailable.value) {
                 startIncidentMetering()
             } else {
-                // CORE FIX: Explicitly set the EV to 0 to clear any stale values
                 _currentEv.value = 0.0
-                recalculate() // Recalculate to update the UI
+                recalculate()
             }
         } else {
             stopIncidentMetering()
@@ -128,8 +148,6 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
         _selectedShutter.value = null
         recalculate()
     }
-
-    // (The rest of the file remains unchanged)
 
     fun addCameraProfile(name: String, aperturesStr: String, shuttersStr: String) {
         try {
@@ -190,12 +208,18 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    private fun saveEvAdjustment() {
-        sharedPreferences.edit().putInt("EV_ADJUSTMENT", _evAdjustment.value).apply()
+    // MODIFIED: Save both adjustment values.
+    private fun saveEvAdjustments() {
+        sharedPreferences.edit()
+            .putInt("CAMERA_EV_ADJUSTMENT", _cameraEvAdjustment.value)
+            .putInt("INCIDENT_EV_ADJUSTMENT", _incidentEvAdjustment.value)
+            .apply()
     }
 
-    private fun loadEvAdjustment() {
-        _evAdjustment.value = sharedPreferences.getInt("EV_ADJUSTMENT", 0)
+    // MODIFIED: Load both adjustment values.
+    private fun loadEvAdjustments() {
+        _cameraEvAdjustment.value = sharedPreferences.getInt("CAMERA_EV_ADJUSTMENT", 0)
+        _incidentEvAdjustment.value = sharedPreferences.getInt("INCIDENT_EV_ADJUSTMENT", 0)
     }
 
     private fun recalculate() {
@@ -203,26 +227,21 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
         val profile = selectedProfile
         val evForCalc = _currentEv.value.roundToInt()
 
-        // First, check if we have the basic requirements. If not, clear all results and stop.
-        if (isoNum == null || profile == null) {
+        _areInputsValid.value = isoNum != null && profile != null
+
+        if (!_areInputsValid.value) {
             _result.value = null
             _allCombinations.value = emptyList()
             _bestOverallResult.value = null
             return
         }
 
-        // If we have the basics, always calculate the list of all possible combinations
-        // and determine the best overall setting among them.
-        _allCombinations.value = calculateAllCombinations(evForCalc, isoNum, profile)
+        _allCombinations.value = calculateAllCombinations(evForCalc, isoNum!!, profile!!)
         _bestOverallResult.value = calculateBestOverallSetting(evForCalc, isoNum, profile)
 
-        // Then, separately, calculate a specific result ONLY if the user has locked
-        // either an aperture or a shutter speed.
         if (_selectedAperture.value != null || _selectedShutter.value != null) {
             _result.value = calculateBestSetting(evForCalc, isoNum, profile, _selectedAperture.value, _selectedShutter.value)
         } else {
-            // If nothing is locked, the specific result should be null. The UI will
-            // correctly fall back to using the 'bestOverallResult' we calculated above.
             _result.value = null
         }
     }
@@ -240,8 +259,6 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) { /* Not used */ }
 
     override fun onSensorChanged(event: SensorEvent?) {
-        // CORE FIX: Add a guard to prevent processing stale sensor events
-        // on devices where the light sensor is not actually available.
         if (!_isLightSensorAvailable.value) {
             return
         }
@@ -251,6 +268,7 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
             val calculatedEv = convertLuxToEv(lux, iso.value.toDoubleOrNull() ?: 100.0)
             _incidentLightingEv.value = calculatedEv
             if (meteringMode.value == MeteringMode.INCIDENT) {
+                // MODIFIED: This will now use the incident-specific adjustment
                 onEvChanged(calculatedEv)
             }
         }
@@ -258,8 +276,8 @@ class ExposureViewModel(application: Application) : AndroidViewModel(application
 
     private fun convertLuxToEv(lux: Float, iso: Double): Double {
         if (lux <= 0) return 0.0
-        val c = 250.0
-        val ev = log2(lux / c) + 9.66
+        val c = 250.0 // Constant for light meters
+        val ev = log2(lux / c) + 9.66 // Approximate conversion formula
         return ev
     }
 

@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -55,8 +56,8 @@ import java.util.Locale
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.log2
-import kotlin.math.roundToInt
 import kotlin.math.pow
+import kotlin.math.roundToInt
 
 // --- Data Classes and Constants ---
 data class LightingOption(val label: String, val ev: Int)
@@ -133,6 +134,9 @@ fun ExposureCalculatorScreen(
     val spotMeteringPoint by exposureViewModel.spotMeteringPoint
     val uiMode by exposureViewModel.uiMode
     val isLightSensorAvailable by exposureViewModel.isLightSensorAvailable
+    val areInputsValid by exposureViewModel.areInputsValid
+    val cameraEvAdjustment by exposureViewModel.cameraEvAdjustment
+    val incidentEvAdjustment by exposureViewModel.incidentEvAdjustment
 
     val context = LocalContext.current
     var hasCameraPermission by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
@@ -146,10 +150,12 @@ fun ExposureCalculatorScreen(
 
     if (showSettingsDialog) {
         SettingsDialog(
-            currentAdjustment = exposureViewModel.evAdjustment.value,
+            currentCameraAdjustment = cameraEvAdjustment,
+            currentIncidentAdjustment = incidentEvAdjustment,
+            isIncidentAvailable = isLightSensorAvailable,
             onDismiss = { showSettingsDialog = false },
-            onSave = { newAdjustment ->
-                exposureViewModel.onEvAdjustmentChanged(newAdjustment)
+            onSave = { newCameraAdj, newIncidentAdj ->
+                exposureViewModel.onEvAdjustmentsChanged(newCameraAdj, newIncidentAdj)
                 showSettingsDialog = false
             }
         )
@@ -175,7 +181,17 @@ fun ExposureCalculatorScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("DECOLUX EXPOSURE", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_decolux_logo),
+                    contentDescription = "DecoLux Logo",
+                    modifier = Modifier.size(72.dp),
+                    // MODIFIED: Explicitly set the tint color here
+                    tint = MaterialTheme.colorScheme.primary
+                )
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Text("DECO-LUX EXPOSURE", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
                 IconButton(onClick = { showHelpDialog = true }) {
                     Icon(Icons.Filled.Help, contentDescription = "Help", tint = MaterialTheme.colorScheme.primary)
                 }
@@ -363,7 +379,10 @@ fun ExposureCalculatorScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
         item {
-            ResultCard(result = result ?: bestOverallResult)
+            ResultCard(
+                result = result ?: bestOverallResult,
+                areInputsValid = areInputsValid
+            )
             Spacer(modifier = Modifier.height(16.dp))
         }
         if (allCombinations.isNotEmpty()) {
@@ -371,8 +390,6 @@ fun ExposureCalculatorScreen(
         }
     }
 }
-
-// --- ALL COMPOSABLES AND FUNCTIONS BELOW ARE CORRECT ---
 
 @Composable
 fun HelpDialog(onDismiss: () -> Unit) {
@@ -386,8 +403,7 @@ fun HelpDialog(onDismiss: () -> Unit) {
             ) {
                 HelpSection(
                     title = "1. Basic Setup",
-                    content = "• Click the Edit icon to create a new Camera Profile. Enter the name, apertures, and shutter speeds - separated by commas.\n" +
-                            "• Select Camera Profile: Choose the camera that matches your lens and shutter speeds.\n" +
+                    content = "• Select Camera Profile: Choose the camera that matches your lens and shutter speeds.\n" +
                             "• Enter Film ISO: Input the ISO of your film. This value is saved for next time. (Note: historical glass plates typically have an ISO between 1-5)."
                 )
                 HelpSection(
@@ -538,7 +554,7 @@ fun ProfileEditScreen(
         ) {
             ArtDecoOutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("CAMERA NAME") }, modifier = Modifier.fillMaxWidth())
             ArtDecoOutlinedTextField(value = apertures, onValueChange = { apertures = it }, label = { Text("APERTURES (COMMA-SEPARATED)") }, modifier = Modifier.fillMaxWidth())
-            ArtDecoOutlinedTextField(value = shutterSpeeds, onValueChange = { shutterSpeeds = it }, label = { Text("SHUTTER SPEEDS (DENOMINATORS ONLY - COMMA-SEPARATED)") }, modifier = Modifier.fillMaxWidth())
+            ArtDecoOutlinedTextField(value = shutterSpeeds, onValueChange = { shutterSpeeds = it }, label = { Text("SHUTTER SPEEDS (COMMA-SEPARATED)") }, modifier = Modifier.fillMaxWidth())
             Spacer(modifier = Modifier.weight(1f))
             Button(
                 onClick = {
@@ -558,16 +574,25 @@ fun ProfileEditScreen(
     }
 }
 
-
 @Composable
-fun ResultCard(result: CalculationResult?) {
+fun ResultCard(result: CalculationResult?, areInputsValid: Boolean) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (result == null) {
-                Text("ENTER ISO AND SELECT A PROFILE.", modifier = Modifier.padding(24.dp), style = MaterialTheme.typography.labelMedium)
+                val message = if (areInputsValid) {
+                    "NO SUITABLE EXPOSURE AVAILABLE FOR THIS CAMERA UNDER THESE CONDITIONS."
+                } else {
+                    "ENTER ISO AND SELECT A PROFILE."
+                }
+                Text(
+                    text = message,
+                    modifier = Modifier.padding(24.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    textAlign = TextAlign.Center
+                )
             } else {
                 Text("BEST EXPOSURE", style = MaterialTheme.typography.titleMedium)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
@@ -592,6 +617,7 @@ fun ResultCard(result: CalculationResult?) {
         }
     }
 }
+
 @Composable
 fun AllCombinationsCard(combinations: List<ExposureCombination>) {
     Card(
@@ -797,35 +823,40 @@ fun ArtDecoOutlinedTextField(
 
 @Composable
 fun SettingsDialog(
-    currentAdjustment: Int,
+    currentCameraAdjustment: Int,
+    currentIncidentAdjustment: Int,
+    isIncidentAvailable: Boolean,
     onDismiss: () -> Unit,
-    onSave: (Int) -> Unit
+    onSave: (cameraAdjustment: Int, incidentAdjustment: Int) -> Unit
 ) {
-    var sliderValue by remember { mutableStateOf(currentAdjustment.toFloat()) }
-    val roundedValue = sliderValue.roundToInt()
+    var cameraSliderValue by remember { mutableStateOf(currentCameraAdjustment.toFloat()) }
+    var incidentSliderValue by remember { mutableStateOf(currentIncidentAdjustment.toFloat()) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Live Meter Adjustment") },
+        title = { Text("Live Meter Calibration") },
         text = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Adjust the calculated EV value by ${roundedValue} stops.")
-                Slider(
-                    value = sliderValue,
-                    onValueChange = { sliderValue = it },
-                    valueRange = -6f..6f,
-                    steps = 11
+                // Camera Meter Adjustment
+                AdjustmentSlider(
+                    title = "Camera Meter (Spot/Average)",
+                    sliderValue = cameraSliderValue,
+                    onValueChange = { cameraSliderValue = it }
                 )
-                Text(
-                    text = if (roundedValue > 0) "+$roundedValue EV" else "$roundedValue EV",
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
+
+                if (isIncidentAvailable) {
+                    Spacer(modifier = Modifier.height(24.dp))
+                    // Incident Meter Adjustment
+                    AdjustmentSlider(
+                        title = "Incident Meter (Front Sensor)",
+                        sliderValue = incidentSliderValue,
+                        onValueChange = { incidentSliderValue = it }
+                    )
+                }
             }
         },
         confirmButton = {
-            Button(onClick = { onSave(roundedValue) }) {
+            Button(onClick = { onSave(cameraSliderValue.roundToInt(), incidentSliderValue.roundToInt()) }) {
                 Text("Save")
             }
         },
@@ -835,6 +866,31 @@ fun SettingsDialog(
             }
         }
     )
+}
+
+@Composable
+private fun AdjustmentSlider(
+    title: String,
+    sliderValue: Float,
+    onValueChange: (Float) -> Unit
+) {
+    val roundedValue = sliderValue.roundToInt()
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        Text("Adjust calculated EV by ${roundedValue} stops.")
+        Slider(
+            value = sliderValue,
+            onValueChange = onValueChange,
+            valueRange = -6f..6f,
+            steps = 11 // Allows for adjustments in full-stop increments
+        )
+        Text(
+            text = if (roundedValue > 0) "+$roundedValue EV" else "$roundedValue EV",
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(top = 8.dp)
+        )
+    }
 }
 
 @Composable
@@ -869,12 +925,10 @@ fun CameraView(
                 ) {
                     val sensorIso = result.get(android.hardware.camera2.CaptureResult.SENSOR_SENSITIVITY)
                     val exposureTimeNs = result.get(android.hardware.camera2.CaptureResult.SENSOR_EXPOSURE_TIME)
-                    // ADD THIS LINE to get the aperture the phone's camera is using.
                     val lensAperture = result.get(android.hardware.camera2.CaptureResult.LENS_APERTURE)
 
 
                     if (sensorIso != null && exposureTimeNs != null && lensAperture != null) {
-                        // Pass all three values to the calculation function.
                         val calculatedEv = calculateEvFromCaptureResult(sensorIso, exposureTimeNs, lensAperture)
                         onEvCalculated(calculatedEv)
                     }
@@ -907,7 +961,7 @@ fun CameraView(
         modifier = Modifier
             .fillMaxSize()
             .pointerInput(Unit) {
-                detectTapGestures { offset, ->
+                detectTapGestures { offset ->
                     val size = IntSize(this.size.width, this.size.height)
                     onTapToMeter(offset, size)
                 }
@@ -919,7 +973,6 @@ fun calculateEvFromCaptureResult(sensorIso: Int, exposureTimeNs: Long, lensApert
     if (exposureTimeNs <= 0 || sensorIso <= 0) return 0.0
     val exposureTimeSec = exposureTimeNs / 1_000_000_000.0
 
-    // CORE FIX: Convert the 'lensAperture' Float to a Double before calling .pow()
     val ev = log2((lensAperture.toDouble().pow(2) / exposureTimeSec) * (100.0 / sensorIso))
 
     return if (ev.isFinite()) ev else 0.0
